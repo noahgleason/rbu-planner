@@ -688,6 +688,10 @@ export default function MissionPortal() {
             const id = addMember(name);
             pickIdentity(id);
           }}
+          onAdminClick={() => {
+            setShowIdentityPicker(false);
+            setShowPasscode(true);
+          }}
         />
       )}
 
@@ -894,7 +898,7 @@ function Modal({ children, onClose, title }) {
   );
 }
 
-function IdentityModal({ roster, onPick, onCreate }) {
+function IdentityModal({ roster, onPick, onCreate, onAdminClick }) {
   const [newName, setNewName] = useState("");
   return (
     <div className="modal-backdrop">
@@ -905,6 +909,10 @@ function IdentityModal({ roster, onPick, onCreate }) {
         <div className="modal-body">
           <p className="muted">Pick your name to see your missions and log your gear.</p>
           <div className="identity-list">
+            <button className="identity-row identity-row-admin" onClick={onAdminClick}>
+              <span className="identity-admin-label"><Lock size={14} /> Admin</span>
+              <ChevronRight size={15} />
+            </button>
             {roster.map((p) => (
               <button key={p.id} className="identity-row" onClick={() => onPick(p.id)}>
                 {p.name} <ChevronRight size={15} />
@@ -1921,6 +1929,13 @@ function PortalStyles() {
         cursor: pointer;
       }
       .identity-row:hover { border-color: var(--accent, #1B6AEE); }
+      .identity-row-admin {
+        background: var(--navy, #001C39);
+        color: #fff;
+        margin-bottom: 4px;
+      }
+      .identity-row-admin:hover { background: #00284d; }
+      .identity-admin-label { display: flex; align-items: center; gap: 7px; }
       .identity-new { display: flex; gap: 8px; }
 
       .app-footer {
