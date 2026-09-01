@@ -24,6 +24,9 @@ or endorsed by any employer or brand.
 - **Per-person view:** each team member sees only their own assigned
   missions, checks them off, and fills in the location/detail themselves
   once they've picked one.
+- **Dashboard:** click the "Mission Manifest" logo to land on a team-wide
+  overview — overall mission progress, quotas, everyone's completion, and
+  shared-log stats — a neutral home base that isn't any one person's view.
 - **Team-wide gear log:** a shared log (not siloed per-person) of placed
   equipment — fridges, barrels, DJ desks — with who placed it and whether
   it's still out in the field or been retrieved.

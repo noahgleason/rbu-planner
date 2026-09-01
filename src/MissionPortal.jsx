@@ -713,7 +713,7 @@ export default function MissionPortal() {
       )}
 
       <header className="top-bar">
-        <div className="brand">
+        <div className="brand brand-clickable" onClick={() => setTab("dashboard")} title="Go to dashboard">
           <Truck size={20} strokeWidth={2.2} />
           <div>
             <div className="brand-title">Mission Manifest</div>
@@ -724,6 +724,7 @@ export default function MissionPortal() {
                 value={monthDraft}
                 onChange={(e) => setMonthDraft(e.target.value)}
                 onBlur={saveMonthLabel}
+                onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") saveMonthLabel();
                   if (e.key === "Escape") setEditingMonth(false);
@@ -733,7 +734,10 @@ export default function MissionPortal() {
               <div
                 id="tour-month-label"
                 className={`brand-sub ${adminMode ? "brand-sub-editable" : ""}`}
-                onClick={() => { if (adminMode) { setMonthDraft(data.monthLabel); setEditingMonth(true); } }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (adminMode) { setMonthDraft(data.monthLabel); setEditingMonth(true); }
+                }}
               >
                 {data.monthLabel}
                 {adminMode && <Pencil size={11} />}
@@ -749,7 +753,14 @@ export default function MissionPortal() {
         <div className="top-actions">
           <SaveIndicator state={saveState} />
           {adminMode ? (
-            <button id="tour-admin-toggle" className="btn btn-ghost" onClick={() => setAdminMode(false)}>
+            <button
+              id="tour-admin-toggle"
+              className="btn btn-ghost"
+              onClick={() => {
+                setAdminMode(false);
+                if (tab === "team") setTab("missions");
+              }}
+            >
               <ShieldOff size={15} /> Exit admin
             </button>
           ) : (
@@ -786,7 +797,15 @@ export default function MissionPortal() {
         </aside>
 
         <main className="main-panel">
-          {!viewer && (
+          {tab === "dashboard" && (
+            <DashboardTab
+              data={data}
+              myId={myId}
+              onSelectPerson={(id) => { setViewId(id); setTab("missions"); }}
+            />
+          )}
+
+          {!viewer && (tab === "missions" || tab === "gear") && (
             <div className="empty-state">
               <Users size={28} />
               <p>No one's selected. Pick a name from the roster.</p>
@@ -965,6 +984,80 @@ function AddMemberInline({ onAdd }) {
         }}
       />
       <button className="btn btn-primary btn-sm" onClick={() => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } }}>Add</button>
+    </div>
+  );
+}
+
+function DashboardTab({ data, myId, onSelectPerson }) {
+  const roster = data.roster;
+  const totalAssigned = roster.reduce((s, p) => s + (data.assignments[p.id] || []).length, 0);
+  const totalDone = roster.reduce((s, p) => s + (data.assignments[p.id] || []).filter((a) => a.done).length, 0);
+  const placedAssets = data.placedAssets || [];
+  const stillPlaced = placedAssets.filter((a) => a.status === "placed").length;
+  const contacts = data.missionContacts || [];
+
+  return (
+    <div className="tab-content">
+      <section className="card">
+        <div className="card-head">
+          <h2>{data.monthLabel}</h2>
+          <Badge tone={totalAssigned > 0 && totalDone === totalAssigned ? "good" : "default"}>
+            {totalDone} of {totalAssigned} missions complete
+          </Badge>
+        </div>
+        <p className="muted">{data.windowNote}</p>
+      </section>
+
+      <section className="quota-strip">
+        {data.catalog.filter((c) => c.available > 0).map((c) => (
+          <div key={c.id} className="quota-chip">
+            <span className="quota-cat">{c.category}</span>
+            <span className="quota-num">{c.remaining}<span className="quota-of">/{c.available}</span></span>
+          </div>
+        ))}
+      </section>
+
+      <section className="card">
+        <div className="card-head"><h2><Users size={16} /> Team progress</h2></div>
+        <ul className="dashboard-progress-list">
+          {roster.map((p) => {
+            const list = data.assignments[p.id] || [];
+            const done = list.filter((a) => a.done).length;
+            const pct = list.length ? Math.round((done / list.length) * 100) : 0;
+            return (
+              <li key={p.id}>
+                <button className="dashboard-progress-row" onClick={() => onSelectPerson(p.id)}>
+                  <span className="dashboard-progress-name">
+                    {p.name}{p.id === myId && <span className="you-tag">you</span>}
+                  </span>
+                  <span className="dashboard-progress-bar-wrap">
+                    <span className="dashboard-progress-bar" style={{ width: `${pct}%` }} />
+                  </span>
+                  <span className="roster-progress">{done}/{list.length}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className="card">
+        <div className="card-head"><h2><Package size={16} /> Shared logs</h2></div>
+        <div className="dashboard-stats">
+          <div className="dashboard-stat">
+            <span className="dashboard-stat-num">{stillPlaced}</span>
+            <span className="dashboard-stat-label">assets still placed</span>
+          </div>
+          <div className="dashboard-stat">
+            <span className="dashboard-stat-num">{placedAssets.length - stillPlaced}</span>
+            <span className="dashboard-stat-label">retrieved</span>
+          </div>
+          <div className="dashboard-stat">
+            <span className="dashboard-stat-num">{contacts.length}</span>
+            <span className="dashboard-stat-label">contacts logged</span>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -1606,6 +1699,8 @@ function PortalStyles() {
         flex-wrap: wrap;
       }
       .brand { display: flex; align-items: center; gap: 10px; }
+      .brand-clickable { cursor: pointer; border-radius: 8px; }
+      .brand-clickable:hover { opacity: 0.85; }
       .top-nav { display: flex; align-items: center; gap: 4px; flex: 1; }
       .top-nav-btn {
         display: flex; align-items: center; gap: 6px;
@@ -1947,6 +2042,26 @@ function PortalStyles() {
       }
       .footer-note { font-size: 12px; }
       .footer-actions { display: flex; align-items: center; gap: 8px; }
+
+      .dashboard-progress-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+      .dashboard-progress-row {
+        display: flex; align-items: center; gap: 14px;
+        width: 100%;
+        padding: 9px 8px;
+        border-radius: 8px;
+        border: none; background: none;
+        cursor: pointer;
+        text-align: left;
+      }
+      .dashboard-progress-row:hover { background: var(--paper); }
+      .dashboard-progress-name { flex: 0 0 170px; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+      .dashboard-progress-bar-wrap { flex: 1; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; display: block; }
+      .dashboard-progress-bar { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.3s ease; }
+
+      .dashboard-stats { display: flex; gap: 32px; flex-wrap: wrap; }
+      .dashboard-stat { display: flex; flex-direction: column; gap: 2px; }
+      .dashboard-stat-num { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 700; }
+      .dashboard-stat-label { font-size: 12px; color: var(--ink-soft); }
 
       .brand-sub-editable { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
       .brand-sub-editable:hover { color: #fff; }
