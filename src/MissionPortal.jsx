@@ -2,18 +2,17 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Truck, Package, ShieldCheck, ShieldOff, CheckCircle2, Circle, Plus, Trash2,
   Lock, Unlock, Download, X, Users, ClipboardList, Shirt, Refrigerator,
-  ChevronRight, AlertCircle, Loader2, Pencil, Save
+  ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft
 } from "lucide-react";
 import storage from "./storage.js";
 
 // ---------- Demo seed data ----------
-// This is deliberately generic/fictional. The version this project was built
-// for seeds from a real monthly field-marketing planning sheet (team roster,
-// case quotas, per-person assignments); that data stays private and is not
-// part of this public repo. Swap SEED below with your own team's shape.
+// NOTE: this currently seeds real teammate names/quotas from the internal
+// planning sheet, for a live walkthrough with a manager. Swap back to
+// fictional names (see git history) before pushing anywhere public.
 const SEED = {
-  monthLabel: "Sample Month \u2014 Demo Team",
-  windowNote: "Missions due the 2nd \u00b7 Edits due the 4th",
+  monthLabel: "September 2026 — Lansing Team",
+  windowNote: "Missions due the 2nd · Edits due the 4th",
   adminPasscode: "changeme",
   // Mirrors the "PLANNING FORMULA" section of the original sheet: total cases
   // in, an occasion split, a cases-per-mission constant -> missions needed.
@@ -33,6 +32,9 @@ const SEED = {
       "Sales Support": 0,
       "University Seeding": 0,
     },
+    // Guaranteed picks applied before the random balanced split — e.g. someone
+    // who specifically asked for more Gaming missions this month.
+    pins: [],
   },
   catalog: [
     { id: "c1", category: "Study", available: 10, remaining: 1 },
@@ -48,11 +50,11 @@ const SEED = {
     { id: "c11", category: "University Seeding", available: 0, remaining: 0 },
   ],
   roster: [
-    { id: "p1", name: "Alex Rivera", priority: 2 },
-    { id: "p2", name: "Jordan Lee", priority: 2 },
-    { id: "p3", name: "Sam Patel", priority: 2 },
-    { id: "p4", name: "Taylor Kim", priority: 2 },
-    { id: "p5", name: "Morgan Diaz", priority: 2 },
+    { id: "p1", name: "Will Kent", priority: 2 },
+    { id: "p2", name: "Sophia Marcukaitis", priority: 2 },
+    { id: "p3", name: "Noah Gleason", priority: 2 },
+    { id: "p4", name: "Vivian Tieu", priority: 2 },
+    { id: "p5", name: "Emilia Djuric", priority: 2 },
   ],
   assignments: {
     p1: [
@@ -62,77 +64,223 @@ const SEED = {
     ],
     p2: [
       { id: "a4", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a5", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a6", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a7", category: "Fitness", note: "Gym near west campus", done: false },
+      { id: "a5", category: "Study", note: "Study lounge (2x)", done: false },
+      { id: "a6", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+      { id: "a7", category: "Party & Socialize", note: "Events of your finding", done: false },
+      { id: "a8", category: "Party & Socialize", note: "Events of your finding", done: false },
+      { id: "a9", category: "Fitness", note: "Gym near west campus", done: false },
     ],
     p3: [
-      { id: "a8", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a9", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a10", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a11", category: "Sports", note: "Local sports event, TBD", done: false },
-      { id: "a12", category: "Gaming", note: "Gaming store, during busy hours", done: false },
+      { id: "a10", category: "Study", note: "Study lounge (2x)", done: false },
+      { id: "a11", category: "Study", note: "Study lounge (2x)", done: false },
+      { id: "a12", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+      { id: "a13", category: "Party & Socialize", note: "Events of your finding", done: false },
+      { id: "a14", category: "Sports", note: "Local sports event, TBD", done: false },
+      { id: "a15", category: "Gaming", note: "Gaming store, during busy hours", done: false },
     ],
     p4: [
-      { id: "a13", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a14", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a15", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a16", category: "Sports", note: "Intramural fields on campus", done: false },
-      { id: "a17", category: "Fitness", note: "Fitness event, TBD", done: false },
+      { id: "a16", category: "Study", note: "Study lounge (2x)", done: false },
+      { id: "a17", category: "Study", note: "Study lounge (2x)", done: false },
+      { id: "a18", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+      { id: "a19", category: "Party & Socialize", note: "Events of your finding", done: false },
+      { id: "a20", category: "Sports", note: "Intramural fields on campus", done: false },
+      { id: "a21", category: "Fitness", note: "Fitness event, TBD", done: false },
     ],
     p5: [
-      { id: "a18", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a19", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a20", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a21", category: "Fitness", note: "Fitness places nearby", done: false },
-      { id: "a22", category: "Gaming", note: "Gaming store / event", done: false },
+      { id: "a22", category: "Study", note: "Study lounge (2x)", done: false },
+      { id: "a23", category: "Study", note: "Study lounge (2x)", done: false },
+      { id: "a24", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+      { id: "a25", category: "Party & Socialize", note: "Events of your finding", done: false },
+      { id: "a26", category: "Fitness", note: "Fitness places nearby", done: false },
+      { id: "a27", category: "Gaming", note: "Gaming store / event", done: false },
     ],
   },
   inventory: {
-    p1: { fridges: [], clothing: [], other: [] },
-    p2: { fridges: [], clothing: [], other: [] },
-    p3: { fridges: [], clothing: [], other: [] },
-    p4: { fridges: [], clothing: [], other: [] },
-    p5: { fridges: [], clothing: [], other: [] },
+    p1: { clothing: [], other: [] },
+    p2: { clothing: [], other: [] },
+    p3: { clothing: [], other: [] },
+    p4: { clothing: [], other: [] },
+    p5: { clothing: [], other: [] },
   },
+  // Team-wide (not per-person) logs.
+  placedAssets: [
+    { id: "pa1", asset: "Mini Fridge", location: "Sample Venue", address: "", placedBy: "p1", status: "placed", notes: "" },
+  ],
+  missionContacts: [],
+  clothingStock: { S: 4, M: 10, L: 8, XL: 3 },
 };
 
-const STORAGE_KEY = "redbull-mission-portal-v2";
+const STORAGE_KEY = "redbull-mission-portal-v3";
 const CATEGORY_ORDER = SEED.catalog.map((c) => c.category);
 const PRIORITY_LABELS = { 1: "Low", 2: "Standard", 3: "High" };
+const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
+const CLOTHING_SIZES = ["S", "M", "L", "XL"];
+
+// ---------- Guided tutorial ----------
+// Steps that always apply, regardless of admin status.
+const TOUR_STEPS_BASE = [
+  {
+    title: "Welcome to Mission Manifest",
+    body: "A quick tour of how this works — about a minute, skip anytime.",
+  },
+  {
+    target: "#tour-roster-rail",
+    title: "Your team",
+    body: "Everyone on the team is listed here. Pick a name to see their missions and gear log — your own is marked “you.”",
+  },
+  {
+    target: "#tour-nav",
+    title: "Missions & gear",
+    setup: (ctx) => ctx.setTab("missions"),
+    body: "Switch between your assigned missions and the team's gear log from here.",
+  },
+  {
+    target: "#tour-missions-card",
+    setup: (ctx) => ctx.setTab("missions"),
+    title: "Your missions",
+    body: "Check missions off as you complete them, and fill in the location once you've picked one.",
+  },
+  {
+    target: "#tour-nav",
+    setup: (ctx) => ctx.setTab("gear"),
+    title: "Gear & placements",
+    body: "Log fridges and barrels you place, contacts you pick up on mission, and gear you're carrying. Placed assets and mission contacts are shared with the whole team.",
+  },
+];
+
+// Shown when the viewer is NOT currently in admin mode.
+const TOUR_STEPS_ADMIN_HINT = [
+  {
+    target: "#tour-admin-toggle",
+    title: "Team leads: admin mode",
+    body: "If you manage the team, unlock admin mode here to generate the monthly plan, edit quotas, and manage the roster.",
+  },
+];
+
+// Shown when the viewer already has admin mode unlocked — points at the
+// dedicated, more thorough admin walkthrough instead of repeating it here.
+const TOUR_STEPS_ADMIN_POINTER = [
+  {
+    title: "You're in admin mode",
+    body: "There's a separate, more detailed walkthrough for everything admin — quotas, the plan generator, roster, and clothing stock. Find it as “Admin walkthrough” in the footer whenever you're ready.",
+  },
+];
+
+const TOUR_STEPS_FINAL = [
+  {
+    title: "That's it",
+    body: "Replay this tour anytime from “Tutorial mode” in the footer.",
+  },
+];
+
+function buildTourSteps(adminMode) {
+  return [
+    ...TOUR_STEPS_BASE,
+    ...(adminMode ? TOUR_STEPS_ADMIN_POINTER : TOUR_STEPS_ADMIN_HINT),
+    ...TOUR_STEPS_FINAL,
+  ];
+}
+
+// Dedicated walkthrough for the admin-only side of the site — only ever
+// launched from admin mode, since every target lives on the Team & quotas
+// tab (which doesn't render unless adminMode is true).
+const ADMIN_TOUR_STEPS = [
+  {
+    title: "The admin side",
+    body: "A closer look at everything admin — quotas, the plan generator, roster, and clothing stock. About two minutes, skip anytime.",
+  },
+  {
+    target: "#tour-nav",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Team & quotas",
+    body: "Everything below lives on this one tab, which only admins can see.",
+  },
+  {
+    target: "#tour-planning-header",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Planning header",
+    body: "Set the month label and the deadline note shown to the whole team. You can also edit the month directly from the top bar.",
+  },
+  {
+    target: "#tour-generator-card",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Generate the plan",
+    body: "Enter the total cases you were given and the percentage split across categories — this is what determines how many missions get created and of what kind.",
+  },
+  {
+    target: "#tour-favorites",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Favorites",
+    body: "Pin a specific category to a specific person before generating — useful when someone's asked for more of something they like. Everything left over is still split randomly by priority.",
+  },
+  {
+    target: "#tour-quotas-card",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Mission quotas",
+    body: "These fill in automatically when you generate a plan, but you can fine-tune available/remaining counts by hand here too — and export the current list to CSV.",
+  },
+  {
+    target: "#tour-roster-manage-card",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Roster & priority",
+    body: "Add or remove teammates, and set each person's priority — higher priority means a bigger share of missions when you generate a plan.",
+  },
+  {
+    target: "#tour-clothing-stock",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Clothing stock",
+    body: "Track how many of each size you have on hand — shown to everyone as context on the Gear & placements tab.",
+  },
+  {
+    title: "That covers admin",
+    body: "Replay this anytime from “Admin walkthrough” in the footer while you're in admin mode.",
+  },
+];
 
 function uid(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function emptyInventory() {
-  return { fridges: [], clothing: [], other: [] };
+  return { clothing: [], other: [] };
 }
 
 // ---------- Planning-formula engine ----------
-// Splits `total` whole units across `weights` (one weight per recipient) so
-// the shares add back up to `total` exactly, using largest-remainder rounding.
-function allocateByWeight(total, weights) {
+// Splits `count` whole units across recipients weighted by `weights`. The
+// floor of each person's weighted share is guaranteed (so priority still
+// matters and no one with a real weight gets shut out); leftover units are
+// handed out one at a time via weighted-random draw instead of always going
+// to whoever has the largest fractional remainder, so the same people don't
+// end up with the "leftover" slot every single month.
+function distributeRandomBalanced(count, weights) {
   const sumW = weights.reduce((s, w) => s + w, 0);
-  if (total <= 0 || sumW <= 0) return weights.map(() => 0);
-  const raw = weights.map((w) => (total * w) / sumW);
-  const floors = raw.map(Math.floor);
-  let remainder = total - floors.reduce((s, f) => s + f, 0);
-  const order = raw
-    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
-    .sort((a, b) => b.frac - a.frac);
-  const result = [...floors];
-  for (let k = 0; k < order.length && remainder > 0; k++, remainder--) {
-    result[order[k].i] += 1;
+  if (count <= 0 || sumW <= 0) return weights.map(() => 0);
+  const raw = weights.map((w) => (count * w) / sumW);
+  const result = raw.map(Math.floor);
+  let remainder = count - result.reduce((s, f) => s + f, 0);
+  const pool = raw.map((v, i) => ({ i, frac: v - Math.floor(v) }));
+  while (remainder > 0 && pool.length > 0) {
+    const totalFrac = pool.reduce((s, p) => s + (p.frac || 0.0001), 0);
+    let r = Math.random() * totalFrac;
+    let pick = 0;
+    for (; pick < pool.length - 1; pick++) {
+      r -= pool[pick].frac || 0.0001;
+      if (r <= 0) break;
+    }
+    result[pool[pick].i] += 1;
+    pool.splice(pick, 1);
+    remainder -= 1;
   }
   return result;
 }
 
-// Turns "total cases this month" + occasion splits + team priorities into a
-// fresh catalog and a fresh set of (unassigned-location) mission slots.
+// Turns "total cases this month" + occasion splits + team priorities (plus
+// any manually-pinned favorites) into a fresh catalog and a fresh set of
+// (unassigned-location) mission slots.
 function generateMissionPlan(config, roster) {
   const totalMissions = Math.max(0, Math.round(config.totalCases / (config.casesPerMission || 1)));
   const weights = roster.map((p) => p.priority || 1);
+  const pins = config.pins || [];
 
   const catalog = [];
   const assignments = {};
@@ -142,14 +290,30 @@ function generateMissionPlan(config, roster) {
     const pct = config.splits[category] || 0;
     const missionsForCategory = Math.round(totalMissions * (pct / 100));
     catalog.push({ id: uid("c"), category, available: missionsForCategory, remaining: missionsForCategory });
-    if (missionsForCategory > 0) {
-      const perPerson = allocateByWeight(missionsForCategory, weights);
-      roster.forEach((p, idx) => {
-        for (let n = 0; n < perPerson[idx]; n++) {
-          assignments[p.id].push({ id: uid("a"), category, note: "", done: false });
-        }
-      });
+    if (missionsForCategory <= 0) return;
+
+    const perPerson = roster.map(() => 0);
+    let remaining = missionsForCategory;
+
+    // Guaranteed picks first (e.g. someone who asked for this category).
+    pins.filter((pin) => pin.category === category).forEach((pin) => {
+      const idx = roster.findIndex((p) => p.id === pin.personId);
+      if (idx === -1 || remaining <= 0) return;
+      const give = Math.min(pin.count, remaining);
+      perPerson[idx] += give;
+      remaining -= give;
+    });
+
+    if (remaining > 0) {
+      const extra = distributeRandomBalanced(remaining, weights);
+      extra.forEach((n, idx) => { perPerson[idx] += n; });
     }
+
+    roster.forEach((p, idx) => {
+      for (let n = 0; n < perPerson[idx]; n++) {
+        assignments[p.id].push({ id: uid("a"), category, note: "", done: false });
+      }
+    });
   });
 
   return { catalog, assignments, totalMissions };
@@ -203,6 +367,60 @@ function IconBtn({ onClick, title, children, danger }) {
   );
 }
 
+// ---------- Guided tutorial overlay ----------
+function TutorialOverlay({ steps, stepIndex, onNext, onBack, onClose, ctx }) {
+  const [rect, setRect] = useState(null);
+  const step = steps[stepIndex];
+  const isLast = stepIndex === steps.length - 1;
+
+  useEffect(() => {
+    if (step.setup) step.setup(ctx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIndex]);
+
+  useEffect(() => {
+    if (!step.target) { setRect(null); return; }
+    const id = setTimeout(() => {
+      const el = document.querySelector(step.target);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "instant" });
+        setRect(el.getBoundingClientRect());
+      } else {
+        setRect(null);
+      }
+    }, 60);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIndex]);
+
+  return (
+    <div className="tour-clickblock" style={{ background: rect ? "transparent" : "rgba(10,16,28,0.6)" }}>
+      {rect && (
+        <div
+          className="tour-spotlight"
+          style={{ top: rect.top - 6, left: rect.left - 6, width: rect.width + 12, height: rect.height + 12 }}
+        />
+      )}
+      <div className="tour-card">
+        <div className="tour-card-head">
+          <span className="tour-step-count">{stepIndex + 1} / {steps.length}</span>
+          <IconBtn title="Skip tutorial" onClick={onClose}><X size={14} /></IconBtn>
+        </div>
+        <h3>{step.title}</h3>
+        <p>{step.body}</p>
+        <div className="tour-actions">
+          {stepIndex > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={onBack}><ArrowLeft size={13} /> Back</button>
+          )}
+          <button className="btn btn-primary btn-sm" onClick={isLast ? onClose : onNext}>
+            {isLast ? "Done" : "Next"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MissionPortal() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -215,7 +433,13 @@ export default function MissionPortal() {
   const [passInput, setPassInput] = useState("");
   const [passError, setPassError] = useState("");
   const [showIdentityPicker, setShowIdentityPicker] = useState(false);
+  const [editingMonth, setEditingMonth] = useState(false);
+  const [monthDraft, setMonthDraft] = useState("");
+  const [tourActive, setTourActive] = useState(false);
+  const [tourSteps, setTourSteps] = useState([]);
+  const [tourStep, setTourStep] = useState(0);
   const saveTimer = useRef(null);
+  const autoTourChecked = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -230,6 +454,56 @@ export default function MissionPortal() {
       setLoading(false);
     })();
   }, []);
+
+  // Refetch shared data when the tab regains focus, so teammates' edits
+  // made elsewhere show up without a manual reload. Skipped mid-save so it
+  // can't clobber an edit that's still in flight.
+  useEffect(() => {
+    function onFocus() {
+      if (saveState === "saving") return;
+      loadData().then((fresh) => { if (fresh) setData(fresh); });
+    }
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [saveState]);
+
+  useEffect(() => {
+    if (loading || !data || !viewId || autoTourChecked.current) return;
+    autoTourChecked.current = true;
+    (async () => {
+      let seen = false;
+      try {
+        const res = await storage.get("tutorial-seen", false);
+        seen = !!(res && res.value);
+      } catch (e) {
+        // not found -> not seen
+      }
+      if (!seen) startTour();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, data, viewId]);
+
+  function startTour() {
+    setTourSteps(buildTourSteps(adminMode));
+    setTourStep(0);
+    setTourActive(true);
+  }
+
+  function startAdminTour() {
+    setTourSteps(ADMIN_TOUR_STEPS);
+    setTourStep(0);
+    setTourActive(true);
+  }
+
+  function closeTour() {
+    setTourActive(false);
+    storage.set("tutorial-seen", "1", false).catch(() => {});
+  }
+
+  function saveMonthLabel() {
+    if (monthDraft.trim()) commit({ ...data, monthLabel: monthDraft.trim() });
+    setEditingMonth(false);
+  }
 
   const commit = useCallback((next) => {
     setData(next);
@@ -247,7 +521,7 @@ export default function MissionPortal() {
       <div className="portal-root portal-loading">
         <PortalStyles />
         <Loader2 className="spin" size={22} />
-        <span>Loading the manifest\u2026</span>
+        <span>Loading the manifest…</span>
       </div>
     );
   }
@@ -355,6 +629,36 @@ export default function MissionPortal() {
     commit({ ...data, inventory: { ...data.inventory, [personId]: { ...inv, [bucket]: nextBucket } } });
   }
 
+  // ---- placed-asset mutations (team-wide) ----
+  function addPlacedAsset(item) {
+    commit({ ...data, placedAssets: [...(data.placedAssets || []), { id: uid("pa"), status: "placed", ...item }] });
+  }
+
+  function removePlacedAsset(id) {
+    commit({ ...data, placedAssets: (data.placedAssets || []).filter((x) => x.id !== id) });
+  }
+
+  function toggleAssetStatus(id) {
+    const next = (data.placedAssets || []).map((x) =>
+      x.id === id ? { ...x, status: x.status === "placed" ? "retrieved" : "placed" } : x
+    );
+    commit({ ...data, placedAssets: next });
+  }
+
+  // ---- mission-contact mutations (team-wide) ----
+  function addMissionContact(item) {
+    commit({ ...data, missionContacts: [...(data.missionContacts || []), { id: uid("ct"), loggedBy: myId, ...item }] });
+  }
+
+  function removeMissionContact(id) {
+    commit({ ...data, missionContacts: (data.missionContacts || []).filter((x) => x.id !== id) });
+  }
+
+  // ---- clothing stock ----
+  function updateClothingStock(size, value) {
+    commit({ ...data, clothingStock: { ...(data.clothingStock || {}), [size]: value } });
+  }
+
   function exportCsv() {
     const rows = [["Name", "Category", "Note", "Done"]];
     data.roster.forEach((p) => {
@@ -409,17 +713,43 @@ export default function MissionPortal() {
           <Truck size={20} strokeWidth={2.2} />
           <div>
             <div className="brand-title">Mission Manifest</div>
-            <div className="brand-sub">{data.monthLabel}</div>
+            {adminMode && editingMonth ? (
+              <input
+                className="text-input month-edit-input"
+                autoFocus
+                value={monthDraft}
+                onChange={(e) => setMonthDraft(e.target.value)}
+                onBlur={saveMonthLabel}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveMonthLabel();
+                  if (e.key === "Escape") setEditingMonth(false);
+                }}
+              />
+            ) : (
+              <div
+                id="tour-month-label"
+                className={`brand-sub ${adminMode ? "brand-sub-editable" : ""}`}
+                onClick={() => { if (adminMode) { setMonthDraft(data.monthLabel); setEditingMonth(true); } }}
+              >
+                {data.monthLabel}
+                {adminMode && <Pencil size={11} />}
+              </div>
+            )}
           </div>
         </div>
+        <nav className="top-nav" id="tour-nav">
+          <TabBtn active={tab === "missions"} onClick={() => setTab("missions")} icon={<ClipboardList size={15} />} label="Missions" />
+          <TabBtn active={tab === "gear"} onClick={() => setTab("gear")} icon={<Package size={15} />} label="Gear & placements" />
+          {adminMode && <TabBtn active={tab === "team"} onClick={() => setTab("team")} icon={<Users size={15} />} label="Team & quotas" />}
+        </nav>
         <div className="top-actions">
           <SaveIndicator state={saveState} />
           {adminMode ? (
-            <button className="btn btn-ghost" onClick={() => setAdminMode(false)}>
+            <button id="tour-admin-toggle" className="btn btn-ghost" onClick={() => setAdminMode(false)}>
               <ShieldOff size={15} /> Exit admin
             </button>
           ) : (
-            <button className="btn btn-ghost" onClick={() => setShowPasscode(true)}>
+            <button id="tour-admin-toggle" className="btn btn-ghost" onClick={() => setShowPasscode(true)}>
               <Lock size={15} /> Admin
             </button>
           )}
@@ -430,7 +760,7 @@ export default function MissionPortal() {
       </header>
 
       <div className="body-grid">
-        <aside className="roster-rail">
+        <aside className="roster-rail" id="tour-roster-rail">
           <div className="rail-label">Team</div>
           <nav>
             {data.roster.map((p) => {
@@ -452,12 +782,6 @@ export default function MissionPortal() {
         </aside>
 
         <main className="main-panel">
-          <div className="tab-row">
-            <TabBtn active={tab === "missions"} onClick={() => setTab("missions")} icon={<ClipboardList size={15} />} label="Missions" />
-            <TabBtn active={tab === "gear"} onClick={() => setTab("gear")} icon={<Package size={15} />} label="Gear & placements" />
-            {adminMode && <TabBtn active={tab === "team"} onClick={() => setTab("team")} icon={<Users size={15} />} label="Team & quotas" />}
-          </div>
-
           {!viewer && (
             <div className="empty-state">
               <Users size={28} />
@@ -481,9 +805,19 @@ export default function MissionPortal() {
           {viewer && tab === "gear" && (
             <GearTab
               viewer={viewer}
+              roster={data.roster}
+              placedBy={myId || viewer.id}
               inventory={data.inventory[viewer.id] || emptyInventory()}
+              placedAssets={data.placedAssets || []}
+              missionContacts={data.missionContacts || []}
+              clothingStock={data.clothingStock || {}}
               onAdd={addInventoryItem}
               onRemove={removeInventoryItem}
+              onAddAsset={addPlacedAsset}
+              onRemoveAsset={removePlacedAsset}
+              onToggleAssetStatus={toggleAssetStatus}
+              onAddContact={addMissionContact}
+              onRemoveContact={removeMissionContact}
             />
           )}
 
@@ -498,10 +832,36 @@ export default function MissionPortal() {
               onUpdatePriority={updatePriority}
               onGeneratePlan={runGeneratePlan}
               addMember={addMember}
+              onUpdateClothingStock={updateClothingStock}
             />
           )}
         </main>
       </div>
+
+      <footer className="app-footer">
+        <span className="muted footer-note">Mission Manifest — a self-service field-marketing planner.</span>
+        <div className="footer-actions">
+          {adminMode && (
+            <button className="btn btn-ghost btn-sm" onClick={startAdminTour}>
+              <ShieldCheck size={14} /> Admin walkthrough
+            </button>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={startTour}>
+            <HelpCircle size={14} /> Tutorial mode
+          </button>
+        </div>
+      </footer>
+
+      {tourActive && tourSteps.length > 0 && (
+        <TutorialOverlay
+          steps={tourSteps}
+          stepIndex={tourStep}
+          onNext={() => setTourStep((s) => Math.min(s + 1, tourSteps.length - 1))}
+          onBack={() => setTourStep((s) => Math.max(s - 1, 0))}
+          onClose={closeTour}
+          ctx={{ setTab }}
+        />
+      )}
     </div>
   );
 }
@@ -514,7 +874,7 @@ function SaveIndicator({ state }) {
 
 function TabBtn({ active, onClick, icon, label }) {
   return (
-    <button className={`tab-btn ${active ? "tab-btn-active" : ""}`} onClick={onClick} type="button">
+    <button className={`top-nav-btn ${active ? "top-nav-btn-active" : ""}`} onClick={onClick} type="button">
       {icon} {label}
     </button>
   );
@@ -618,7 +978,7 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
         ))}
       </section>
 
-      <section className="card">
+      <section className="card" id="tour-missions-card">
         <div className="card-head">
           <h2>{viewer.name}'s missions</h2>
           <Badge tone={list.every((a) => a.done) && list.length ? "good" : "default"}>
@@ -630,7 +990,7 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
         {missingLocations > 0 && canEditNotes && (
           <p className="muted empty-hint">
             <AlertCircle size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />
-            {missingLocations} mission{missingLocations > 1 ? "s" : ""} still need a location \u2014 tap to add one.
+            {missingLocations} mission{missingLocations > 1 ? "s" : ""} still need a location — tap to add one.
           </p>
         )}
 
@@ -646,7 +1006,7 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
                   <input
                     className="mission-note-input"
                     value={a.note}
-                    placeholder="Add a location or detail\u2026"
+                    placeholder="Add a location or detail…"
                     onChange={(e) => onNoteChange(viewer.id, a.id, e.target.value)}
                   />
                 ) : (
@@ -689,25 +1049,41 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
   );
 }
 
-function GearTab({ viewer, inventory, onAdd, onRemove }) {
+function GearTab({
+  viewer, roster, placedBy, inventory, placedAssets, missionContacts, clothingStock,
+  onAdd, onRemove, onAddAsset, onRemoveAsset, onToggleAssetStatus, onAddContact, onRemoveContact,
+}) {
+  const stockLine = CLOTHING_SIZES.map((s) => `${s} ${clothingStock[s] ?? 0}`).join(" · ");
+
   return (
     <div className="tab-content">
+      <PlacedAssetsSection
+        items={placedAssets}
+        roster={roster}
+        placedBy={placedBy}
+        onAdd={onAddAsset}
+        onRemove={onRemoveAsset}
+        onToggleStatus={onToggleAssetStatus}
+      />
+
       <GearSection
-        title="Fridge placements"
-        icon={<Refrigerator size={16} />}
-        items={inventory.fridges}
+        title="Mission contacts"
+        icon={<Users size={16} />}
+        items={missionContacts}
         fields={[
-          { key: "location", placeholder: "Venue name", required: true },
-          { key: "address", placeholder: "Address / campus building" },
-          { key: "notes", placeholder: "Notes (restock day, contact, etc.)" },
+          { key: "name", placeholder: "Contact name", required: true },
+          { key: "phone", placeholder: "Phone" },
+          { key: "email", placeholder: "Email" },
+          { key: "address", placeholder: "Address" },
+          { key: "venue", placeholder: "Venue / what they do" },
         ]}
-        onAdd={(item) => onAdd(viewer.id, "fridges", item)}
-        onRemove={(id) => onRemove(viewer.id, "fridges", id)}
+        onAdd={(item) => onAddContact(item)}
+        onRemove={(id) => onRemoveContact(id)}
         renderItem={(it) => (
           <>
-            <span className="gear-primary">{it.location}</span>
-            {it.address && <span className="gear-secondary">{it.address}</span>}
-            {it.notes && <span className="gear-notes">{it.notes}</span>}
+            <span className="gear-primary">{it.name}</span>
+            {it.venue && <span className="gear-secondary">{it.venue}</span>}
+            {(it.phone || it.email) && <span className="gear-notes">{[it.phone, it.email].filter(Boolean).join(" · ")}</span>}
           </>
         )}
       />
@@ -730,6 +1106,7 @@ function GearTab({ viewer, inventory, onAdd, onRemove }) {
             {it.qty && <span className="gear-notes">Qty {it.qty}</span>}
           </>
         )}
+        subtitle={`Team stock on hand — ${stockLine}`}
       />
 
       <GearSection
@@ -753,7 +1130,73 @@ function GearTab({ viewer, inventory, onAdd, onRemove }) {
   );
 }
 
-function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem }) {
+function PlacedAssetsSection({ items, roster, placedBy, onAdd, onRemove, onToggleStatus }) {
+  const blankForm = { asset: ASSET_TYPES[0], location: "", address: "", notes: "" };
+  const [form, setForm] = useState(blankForm);
+  const [adding, setAdding] = useState(false);
+
+  function submit() {
+    if (!form.location.trim()) return;
+    onAdd({ ...form, placedBy, status: "placed" });
+    setForm(blankForm);
+    setAdding(false);
+  }
+
+  function personName(id) {
+    return roster.find((r) => r.id === id)?.name || "Unknown";
+  }
+
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2><Refrigerator size={16} /> Placed assets</h2>
+        <Badge>{items.length}</Badge>
+      </div>
+      <p className="muted empty-hint">Team-wide log of fridges, barrels, and other equipment out in the field.</p>
+
+      {items.length === 0 && !adding && <p className="muted empty-hint">Nothing logged yet.</p>}
+
+      <ul className="gear-list">
+        {items.map((it) => (
+          <li key={it.id} className="gear-row">
+            <div className="gear-text">
+              <span className="gear-primary">{it.asset} — {it.location}</span>
+              {it.address && <span className="gear-secondary">{it.address}</span>}
+              <span className="gear-secondary">Placed by {personName(it.placedBy)}</span>
+              {it.notes && <span className="gear-notes">{it.notes}</span>}
+            </div>
+            <div className="gear-actions">
+              <Badge tone={it.status === "placed" ? "good" : "default"}>
+                {it.status === "placed" ? "Still there" : "Brought back"}
+              </Badge>
+              <button className="btn btn-ghost btn-sm" onClick={() => onToggleStatus(it.id)}>
+                {it.status === "placed" ? "Mark retrieved" : "Mark placed"}
+              </button>
+              <IconBtn danger title="Remove" onClick={() => onRemove(it.id)}><Trash2 size={14} /></IconBtn>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {adding ? (
+        <div className="add-row add-row-wrap">
+          <select className="text-input select-input-sm" value={form.asset} onChange={(e) => setForm({ ...form, asset: e.target.value })}>
+            {ASSET_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <input className="text-input" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <input className="text-input" placeholder="Address (optional)" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <input className="text-input" placeholder="Notes (optional)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <button className="btn btn-primary btn-sm" onClick={submit}><Plus size={14} /> Add</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => { setAdding(false); setForm(blankForm); }}>Cancel</button>
+        </div>
+      ) : (
+        <button className="link-add" onClick={() => setAdding(true)}><Plus size={14} /> Log a placement</button>
+      )}
+    </section>
+  );
+}
+
+function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem, subtitle }) {
   const [form, setForm] = useState({});
   const [adding, setAdding] = useState(false);
 
@@ -771,6 +1214,7 @@ function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem }
         <h2>{icon} {title}</h2>
         <Badge>{items.length}</Badge>
       </div>
+      {subtitle && <p className="muted empty-hint">{subtitle}</p>}
 
       {items.length === 0 && !adding && <p className="muted empty-hint">Nothing logged yet.</p>}
 
@@ -805,15 +1249,17 @@ function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem }
   );
 }
 
-function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority, onGeneratePlan, addMember }) {
+function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority, onGeneratePlan, addMember, onUpdateClothingStock }) {
   const [editingMeta, setEditingMeta] = useState(false);
   const [monthLabel, setMonthLabel] = useState(data.monthLabel);
   const [windowNote, setWindowNote] = useState(data.windowNote);
   const [newName, setNewName] = useState("");
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [removeConfirmText, setRemoveConfirmText] = useState("");
 
   return (
     <div className="tab-content">
-      <section className="card">
+      <section className="card" id="tour-planning-header">
         <div className="card-head">
           <h2>Planning header</h2>
           {editingMeta ? (
@@ -842,12 +1288,12 @@ function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta
         onGenerate={onGeneratePlan}
       />
 
-      <section className="card">
+      <section className="card" id="tour-quotas-card">
         <div className="card-head">
           <h2>Mission quotas</h2>
           <button className="btn btn-ghost btn-sm" onClick={onExport}><Download size={14} /> Export CSV</button>
         </div>
-        <p className="muted empty-hint">These update automatically when you generate a plan above \u2014 or fine-tune them by hand here.</p>
+        <p className="muted empty-hint">These update automatically when you generate a plan above — or fine-tune them by hand here.</p>
         <div className="quota-table">
           <div className="quota-table-head">
             <span>Category</span><span>Available</span><span>Remaining</span>
@@ -874,9 +1320,27 @@ function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" id="tour-clothing-stock">
+        <div className="card-head"><h2>Clothing stock</h2></div>
+        <p className="muted empty-hint">How many of each size you have on hand to hand out.</p>
+        <div className="gen-inputs">
+          {CLOTHING_SIZES.map((size) => (
+            <label className="gen-field" key={size}>
+              <span>{size}</span>
+              <input
+                className="text-input text-input-num"
+                type="number" min="0"
+                value={data.clothingStock?.[size] ?? 0}
+                onChange={(e) => onUpdateClothingStock(size, Math.max(0, parseInt(e.target.value || "0", 10)))}
+              />
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section className="card" id="tour-roster-manage-card">
         <div className="card-head"><h2>Roster &amp; priority</h2><Badge>{data.roster.length}</Badge></div>
-        <p className="muted empty-hint">Priority controls how missions are divided when you generate a plan \u2014 higher priority means a bigger share.</p>
+        <p className="muted empty-hint">Priority controls how missions are divided when you generate a plan — higher priority means a bigger share.</p>
         <ul className="roster-manage-list">
           {data.roster.map((p) => (
             <li key={p.id} className="roster-manage-row">
@@ -891,7 +1355,7 @@ function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta
                   <option value={2}>Standard</option>
                   <option value={3}>High priority</option>
                 </select>
-                <IconBtn danger title="Remove from team" onClick={() => { if (confirm(`Remove ${p.name} from the team? This deletes their missions and gear log.`)) onRemoveMember(p.id); }}>
+                <IconBtn danger title="Remove from team" onClick={() => { setRemoveTarget(p); setRemoveConfirmText(""); }}>
                   <Trash2 size={14} />
                 </IconBtn>
               </div>
@@ -911,12 +1375,46 @@ function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta
           </button>
         </div>
       </section>
+
+      {removeTarget && (
+        <Modal onClose={() => setRemoveTarget(null)} title="Remove teammate">
+          <p className="muted">
+            This permanently deletes <strong>{removeTarget.name}</strong>'s missions and gear log. This can't be undone.
+          </p>
+          <p className="muted">
+            Type <strong>{removeTarget.name}</strong> to confirm.
+          </p>
+          <input
+            className="text-input"
+            autoFocus
+            value={removeConfirmText}
+            onChange={(e) => setRemoveConfirmText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && removeConfirmText === removeTarget.name) {
+                onRemoveMember(removeTarget.id);
+                setRemoveTarget(null);
+              }
+            }}
+            placeholder={removeTarget.name}
+          />
+          <button
+            className="btn btn-danger"
+            disabled={removeConfirmText !== removeTarget.name}
+            onClick={() => { onRemoveMember(removeTarget.id); setRemoveTarget(null); }}
+          >
+            <Trash2 size={14} /> Remove {removeTarget.name}
+          </button>
+        </Modal>
+      )}
     </div>
   );
 }
 
 function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGenerate }) {
   const [local, setLocal] = useState(config);
+  const [pinPerson, setPinPerson] = useState(roster[0]?.id || "");
+  const [pinCategory, setPinCategory] = useState(CATEGORY_ORDER[0]);
+  const [pinCount, setPinCount] = useState(1);
   const totalPct = CATEGORY_ORDER.reduce((s, c) => s + (Number(local.splits[c]) || 0), 0);
   const totalMissions = Math.max(0, Math.round((local.totalCases || 0) / (local.casesPerMission || 1)));
 
@@ -938,16 +1436,28 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
     setLocal(next);
     onUpdateConfig(next);
   }
+  function addPin() {
+    if (!pinPerson) return;
+    const next = { ...local, pins: [...(local.pins || []), { id: uid("pin"), personId: pinPerson, category: pinCategory, count: Math.max(1, pinCount) }] };
+    setLocal(next);
+    onUpdateConfig(next);
+  }
+  function removePin(id) {
+    const next = { ...local, pins: (local.pins || []).filter((p) => p.id !== id) };
+    setLocal(next);
+    onUpdateConfig(next);
+  }
 
   return (
-    <section className="card generator-card">
+    <section className="card generator-card" id="tour-generator-card">
       <div className="card-head">
         <h2>Generate this month's plan</h2>
         <Badge tone="good">{totalMissions} missions from {local.totalCases || 0} cases</Badge>
       </div>
       <p className="muted empty-hint">
         Enter what corporate gave you to distribute, and the split each pillar should get. This replaces the current
-        quotas and creates fresh (location-TBD) mission slots divided across the team by priority.
+        quotas and creates fresh (location-TBD) mission slots — favorites picked below get guaranteed first, the
+        rest are split randomly by priority so no one's stuck with none (or all) of one category.
       </p>
 
       <div className="gen-inputs">
@@ -994,6 +1504,41 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
         ))}
       </div>
 
+      <div id="tour-favorites">
+        <div className="split-head" style={{ marginTop: 16 }}>
+          <span>Favorites (optional)</span>
+        </div>
+        <p className="muted empty-hint">Guarantee specific people get specific categories before the rest are split randomly.</p>
+        {(local.pins || []).length > 0 && (
+          <ul className="roster-manage-list">
+            {(local.pins || []).map((pin) => {
+              const person = roster.find((p) => p.id === pin.personId);
+              return (
+                <li key={pin.id} className="roster-manage-row">
+                  <span>{person ? person.name : "Unknown"} — {pin.count}× {pin.category}</span>
+                  <IconBtn danger title="Remove favorite" onClick={() => removePin(pin.id)}><Trash2 size={14} /></IconBtn>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <div className="add-row">
+          <select className="text-input select-input select-input-sm" value={pinPerson} onChange={(e) => setPinPerson(e.target.value)}>
+            {roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <select className="text-input select-input select-input-sm" value={pinCategory} onChange={(e) => setPinCategory(e.target.value)}>
+            {CATEGORY_ORDER.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <input
+            className="text-input text-input-num"
+            type="number" min="1"
+            value={pinCount}
+            onChange={(e) => setPinCount(Math.max(1, parseInt(e.target.value || "1", 10)))}
+          />
+          <button className="btn btn-ghost btn-sm" onClick={addPin}><Plus size={14} /> Pin favorite</button>
+        </div>
+      </div>
+
       <button
         className="btn btn-primary"
         style={{ marginTop: 14 }}
@@ -1013,21 +1558,21 @@ function PortalStyles() {
   return (
     <style>{`
       .portal-root {
-        --paper: #F2EEE3;
-        --ink: #1C2333;
-        --ink-soft: #4B5265;
-        --line: #D9D3C2;
-        --rust: #C1440E;
-        --rust-soft: #F0D9CB;
-        --teal: #2F6F68;
-        --teal-soft: #DCEAE7;
-        --card: #FBFAF6;
-        font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+        --paper: #F8F8F8;
+        --ink: #000F1E;
+        --ink-soft: rgba(0,15,30,0.6);
+        --line: rgba(0,15,30,0.12);
+        --accent: #1B6AEE;
+        --accent-soft: #E5EEFD;
+        --success: #12873F;
+        --success-soft: #E8F5ED;
+        --danger: #DB0A40;
+        --navy: #001C39;
+        --card: #FFFFFF;
+        font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         background: var(--paper);
         color: var(--ink);
         min-height: 100vh;
-        border-radius: 12px;
-        overflow: hidden;
         display: flex;
         flex-direction: column;
       }
@@ -1045,40 +1590,62 @@ function PortalStyles() {
       .top-bar {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        padding: 16px 20px;
-        border-bottom: 2px solid var(--ink);
-        background: var(--card);
+        gap: 24px;
+        padding: 12px 20px;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+        background: var(--navy);
+        color: #fff;
+        flex-wrap: wrap;
       }
       .brand { display: flex; align-items: center; gap: 10px; }
+      .top-nav { display: flex; align-items: center; gap: 4px; flex: 1; }
+      .top-nav-btn {
+        display: flex; align-items: center; gap: 6px;
+        padding: 8px 16px;
+        border-radius: 999px;
+        border: none;
+        background: transparent;
+        color: rgba(255,255,255,0.7);
+        font-size: 13.5px;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .top-nav-btn:hover { color: #fff; background: rgba(255,255,255,0.06); }
+      .top-nav-btn-active { background: rgba(255,255,255,0.12); color: #fff; font-weight: 600; }
       .brand-title {
-        font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+        font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         font-weight: 700;
         font-size: 17px;
         letter-spacing: 0.01em;
         line-height: 1.1;
+        color: #fff;
       }
-      .brand-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+      .brand-sub { font-size: 12px; color: rgba(255,255,255,0.65); margin-top: 2px; }
       .top-actions { display: flex; align-items: center; gap: 8px; }
 
       .save-indicator {
         font-size: 12px;
-        color: var(--ink-soft);
+        color: rgba(255,255,255,0.65);
         display: flex;
         align-items: center;
         gap: 5px;
         margin-right: 4px;
       }
-      .save-ok { color: var(--teal); }
+      .save-ok { color: #6ee7a8; }
+      .top-bar .btn-ghost { border-color: rgba(255,255,255,0.3); color: #fff; }
+      .top-bar .btn-ghost:hover { border-color: #fff; background: rgba(255,255,255,0.08); }
+      .top-bar .icon-btn { border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.85); }
+      .top-bar .icon-btn:hover { border-color: #fff; color: #fff; }
 
       .btn {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        border-radius: 8px;
-        padding: 8px 14px;
+        border-radius: 999px;
+        padding: 8px 16px;
         font-size: 13.5px;
-        font-weight: 600;
+        font-weight: 500;
         border: 1.5px solid var(--ink);
         background: transparent;
         color: var(--ink);
@@ -1089,23 +1656,25 @@ function PortalStyles() {
       .btn:disabled { opacity: 0.4; cursor: not-allowed; }
       .btn-ghost { border-color: var(--line); }
       .btn-ghost:hover { border-color: var(--ink); }
-      .btn-primary { background: var(--rust); border-color: var(--rust); color: #fff; }
-      .btn-primary:hover { background: #a83a0c; }
-      .btn-sm { padding: 6px 10px; font-size: 12.5px; }
+      .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .btn-primary:hover { background: #1552bd; }
+      .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; margin-top: 4px; }
+      .btn-danger:hover { background: #b30836; }
+      .btn-sm { padding: 6px 12px; font-size: 12.5px; }
 
       .icon-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         width: 30px; height: 30px;
-        border-radius: 7px;
+        border-radius: 999px;
         border: 1.5px solid var(--line);
         background: transparent;
         color: var(--ink-soft);
         cursor: pointer;
       }
       .icon-btn:hover { border-color: var(--ink); color: var(--ink); }
-      .icon-btn-danger:hover { border-color: var(--rust); color: var(--rust); }
+      .icon-btn-danger:hover { border-color: var(--danger); color: var(--danger); }
 
       .body-grid {
         display: flex;
@@ -1116,8 +1685,8 @@ function PortalStyles() {
       .roster-rail {
         width: 220px;
         flex-shrink: 0;
-        border-right: 2px solid var(--ink);
-        padding: 16px 12px;
+        border-right: 1px solid var(--line);
+        padding: 20px 14px;
         background: var(--card);
       }
       .rail-label {
@@ -1133,7 +1702,7 @@ function PortalStyles() {
         justify-content: space-between;
         gap: 8px;
         padding: 9px 10px;
-        border-radius: 8px;
+        border-radius: 999px;
         border: none;
         background: transparent;
         color: var(--ink);
@@ -1142,8 +1711,8 @@ function PortalStyles() {
         cursor: pointer;
         margin-bottom: 2px;
       }
-      .roster-item:hover { background: var(--rust-soft); }
-      .roster-item-active { background: var(--rust); color: #fff; font-weight: 600; }
+      .roster-item:hover { background: var(--accent-soft); }
+      .roster-item-active { background: var(--accent); color: #fff; font-weight: 600; }
       .roster-name { display: flex; align-items: center; gap: 6px; }
       .you-tag {
         font-size: 10px;
@@ -1166,34 +1735,22 @@ function PortalStyles() {
       .rail-add:hover { border-color: var(--ink); color: var(--ink); }
       .rail-add-form { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 
-      .main-panel { flex: 1; padding: 18px 24px 32px; overflow-y: auto; }
-      .tab-row { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1.5px solid var(--line); }
-      .tab-btn {
-        display: flex; align-items: center; gap: 6px;
-        padding: 9px 4px 11px;
-        margin-right: 18px;
-        border: none; background: none;
-        font-size: 13.5px; font-weight: 600;
-        color: var(--ink-soft);
-        border-bottom: 2.5px solid transparent;
-        cursor: pointer;
-        margin-bottom: -1.5px;
-      }
-      .tab-btn-active { color: var(--ink); border-color: var(--rust); }
+      .main-panel { flex: 1; padding: 24px 28px 32px; overflow-y: auto; }
 
       .empty-state {
         display: flex; flex-direction: column; align-items: center; gap: 10px;
         padding: 60px 0; color: var(--ink-soft);
       }
 
-      .tab-content { display: flex; flex-direction: column; gap: 18px; }
+      .tab-content { display: flex; flex-direction: column; gap: 24px; }
 
-      .quota-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+      .quota-strip { display: flex; flex-wrap: wrap; gap: 10px; }
       .quota-chip {
         background: var(--card);
-        border: 1.5px solid var(--line);
-        border-radius: 9px;
-        padding: 7px 12px;
+        border: none;
+        box-shadow: 0 1px 2px rgba(0,15,30,0.06), 0 1px 12px rgba(0,15,30,0.04);
+        border-radius: 12px;
+        padding: 10px 14px;
         display: flex; flex-direction: column; gap: 2px;
         min-width: 84px;
       }
@@ -1203,16 +1760,17 @@ function PortalStyles() {
 
       .card {
         background: var(--card);
-        border: 1.5px solid var(--line);
-        border-radius: 12px;
-        padding: 16px 18px 18px;
+        border: none;
+        box-shadow: 0 1px 2px rgba(0,15,30,0.06), 0 1px 16px rgba(0,15,30,0.05);
+        border-radius: 16px;
+        padding: 22px 24px 24px;
       }
       .card-head {
         display: flex; align-items: center; justify-content: space-between;
-        margin-bottom: 12px;
+        margin-bottom: 16px;
       }
       .card-head h2 {
-        font-family: 'Space Grotesk', sans-serif;
+        font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         font-size: 15.5px;
         font-weight: 700;
         margin: 0;
@@ -1229,7 +1787,7 @@ function PortalStyles() {
         background: var(--line);
         color: var(--ink-soft);
       }
-      .badge-good { background: var(--teal-soft); color: var(--teal); }
+      .badge-good { background: var(--success-soft); color: var(--success); }
 
       .mission-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
       .mission-row {
@@ -1241,7 +1799,7 @@ function PortalStyles() {
       .mission-row:last-child { border-bottom: none; }
       .mission-done { opacity: 0.55; }
       .mission-done .mission-note, .mission-done .mission-cat { text-decoration: line-through; }
-      .mission-check { background: none; border: none; color: var(--rust); cursor: pointer; padding: 0; margin-top: 1px; }
+      .mission-check { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; margin-top: 1px; }
       .mission-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
       .mission-cat { font-weight: 600; font-size: 13.5px; }
       .mission-note { font-size: 12.5px; color: var(--ink-soft); }
@@ -1259,7 +1817,7 @@ function PortalStyles() {
         flex: 1;
         min-width: 120px;
       }
-      .text-input:focus { outline: none; border-color: var(--rust); }
+      .text-input:focus { outline: none; border-color: var(--accent); }
       .text-input-sm { padding: 6px 9px; font-size: 12.5px; }
       .text-input-num { max-width: 76px; flex: none; font-family: 'IBM Plex Mono', monospace; }
       .select-input { flex: none; min-width: 150px; }
@@ -1267,19 +1825,23 @@ function PortalStyles() {
       .gear-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
       .gear-row {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 9px 10px;
-        border: 1px solid var(--line);
-        border-radius: 8px;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 10px 14px;
+        border: none;
+        box-shadow: 0 1px 2px rgba(0,15,30,0.06), 0 1px 10px rgba(0,15,30,0.04);
+        border-radius: 10px;
         background: #fff;
       }
       .gear-text { display: flex; flex-direction: column; gap: 1px; }
+      .gear-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
       .gear-primary { font-weight: 600; font-size: 13.5px; }
       .gear-secondary { font-size: 12px; color: var(--ink-soft); }
       .gear-notes { font-size: 11.5px; color: var(--ink-soft); font-style: italic; }
 
       .link-add {
         display: inline-flex; align-items: center; gap: 6px;
-        background: none; border: none; color: var(--rust);
+        background: none; border: none; color: var(--accent);
         font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 0;
       }
 
@@ -1309,9 +1871,9 @@ function PortalStyles() {
         width: 100%;
         max-width: 320px;
       }
-      .mission-note-input:focus { outline: none; border-color: var(--rust); color: var(--ink); }
+      .mission-note-input:focus { outline: none; border-color: var(--accent); color: var(--ink); }
 
-      .generator-card { border-color: var(--rust); border-width: 2px; }
+      .generator-card { box-shadow: 0 0 0 1.5px var(--accent), 0 1px 16px rgba(0,15,30,0.05); }
       .gen-inputs { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 16px; }
       .gen-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-soft); flex: 1; min-width: 160px; }
       .split-head {
@@ -1319,8 +1881,8 @@ function PortalStyles() {
         font-size: 11px; color: var(--ink-soft); margin-bottom: 6px;
       }
       .split-total { display: flex; align-items: center; gap: 6px; font-weight: 600; }
-      .split-ok { color: var(--teal); }
-      .split-warn { color: var(--rust); }
+      .split-ok { color: var(--success); }
+      .split-warn { color: var(--danger); }
       .split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
       .split-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; gap: 8px; }
       .split-input-wrap { display: flex; align-items: center; gap: 4px; }
@@ -1338,31 +1900,69 @@ function PortalStyles() {
         z-index: 50; padding: 20px;
       }
       .modal-card {
-        background: var(--card, #FBFAF6);
+        background: var(--card, #FFFFFF);
         border-radius: 14px;
         width: 100%; max-width: 380px;
         padding: 18px 20px 20px;
         box-shadow: 0 20px 60px rgba(0,0,0,0.25);
       }
       .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-      .modal-head h3 { margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 16px; }
+      .modal-head h3 { margin: 0; font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 16px; }
       .modal-body { display: flex; flex-direction: column; gap: 10px; }
-      .error-text { display: flex; align-items: center; gap: 5px; color: #B3261E; font-size: 12.5px; }
+      .error-text { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12.5px; }
 
       .identity-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 12px; }
       .identity-row {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 10px 12px; border-radius: 8px;
-        border: 1.5px solid var(--line, #D9D3C2);
+        padding: 11px 14px; border-radius: 10px;
+        border: none;
+        box-shadow: 0 1px 2px rgba(0,15,30,0.06), 0 1px 10px rgba(0,15,30,0.04);
         background: #fff; font-size: 13.5px; font-weight: 500;
         cursor: pointer;
       }
-      .identity-row:hover { border-color: var(--rust, #C1440E); }
+      .identity-row:hover { border-color: var(--accent, #1B6AEE); }
       .identity-new { display: flex; gap: 8px; }
+
+      .app-footer {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; flex-wrap: wrap;
+        padding: 12px 20px;
+        border-top: 1px solid var(--line);
+        background: var(--card);
+      }
+      .footer-note { font-size: 12px; }
+      .footer-actions { display: flex; align-items: center; gap: 8px; }
+
+      .brand-sub-editable { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+      .brand-sub-editable:hover { color: #fff; }
+      .month-edit-input { margin-top: 2px; padding: 3px 8px; font-size: 12px; width: 180px; }
+
+      .tour-clickblock { position: fixed; inset: 0; z-index: 9997; }
+      .tour-spotlight {
+        position: fixed; z-index: 9997;
+        border-radius: 10px;
+        pointer-events: none;
+        box-shadow: 0 0 0 3px var(--accent), 0 0 0 9999px rgba(10,16,28,0.6);
+        transition: top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease;
+      }
+      .tour-card {
+        position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+        z-index: 9998;
+        width: calc(100% - 40px); max-width: 360px;
+        background: var(--card);
+        border-radius: 16px;
+        padding: 16px 18px 18px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+      }
+      .tour-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+      .tour-step-count { font-size: 11px; color: var(--ink-soft); letter-spacing: 0.04em; }
+      .tour-card h3 { margin: 0 0 6px; font-size: 15.5px; }
+      .tour-card p { margin: 0; font-size: 13.5px; color: var(--ink-soft); line-height: 1.4; }
+      .tour-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
       @media (max-width: 720px) {
         .body-grid { flex-direction: column; }
-        .roster-rail { width: 100%; border-right: none; border-bottom: 2px solid var(--ink); }
+        .roster-rail { width: 100%; border-right: none; border-bottom: 1px solid var(--line); }
         .roster-rail nav { display: flex; overflow-x: auto; gap: 6px; }
         .roster-item { width: auto; white-space: nowrap; }
         .rail-add, .rail-add-form { display: none; }
