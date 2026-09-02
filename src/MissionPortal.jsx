@@ -17,7 +17,11 @@ const SEED = {
   // Mirrors the "PLANNING FORMULA" section of the original sheet: total cases
   // in, an occasion split, a cases-per-mission constant -> missions needed.
   planningConfig: {
-    totalCases: 600,
+    // The real input is a monthly can goal; cansPerCase converts it to cases,
+    // then casesPerMission converts cases to missions needed.
+    cansGoal: 12300,
+    cansPerCase: 24,
+    totalCases: 513,
     casesPerMission: 15,
     splits: {
       "Study": 33,
@@ -26,9 +30,6 @@ const SEED = {
       "Sports": 6,
       "Fitness": 9,
       "Gaming": 12,
-      "Drive": 0,
-      "Shopping": 0,
-      "Leisure": 0,
       "Sales Support": 0,
       "University Seeding": 0,
     },
@@ -43,9 +44,6 @@ const SEED = {
     { id: "c4", category: "Sports", available: 2, remaining: 0 },
     { id: "c5", category: "Fitness", available: 3, remaining: 0 },
     { id: "c6", category: "Gaming", available: 3, remaining: 0 },
-    { id: "c7", category: "Drive", available: 0, remaining: 0 },
-    { id: "c8", category: "Shopping", available: 0, remaining: 0 },
-    { id: "c9", category: "Leisure", available: 0, remaining: 0 },
     { id: "c10", category: "Sales Support", available: 2, remaining: 2 },
     { id: "c11", category: "University Seeding", available: 0, remaining: 0 },
   ],
@@ -1066,7 +1064,7 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
   const list = data.assignments[viewer.id] || [];
   const [newCat, setNewCat] = useState(CATEGORY_ORDER[0]);
   const [newNote, setNewNote] = useState("");
-  const missingLocations = list.filter((a) => !a.note.trim()).length;
+  const missingLocations = list.filter((a) => a.category !== "University Seeding" && !a.note.trim()).length;
 
   return (
     <div className="tab-content">
@@ -1104,14 +1102,28 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
               <div className="mission-text">
                 <span className="mission-cat">{a.category}</span>
                 {canEditNotes ? (
-                  <input
-                    className="mission-note-input"
-                    value={a.note}
-                    placeholder="Add a location or detail…"
-                    onChange={(e) => onNoteChange(viewer.id, a.id, e.target.value)}
-                  />
+                  a.category === "University Seeding" ? (
+                    <input
+                      className="mission-note-input"
+                      type="number" min="0"
+                      value={a.note}
+                      placeholder="Cans placed"
+                      onChange={(e) => onNoteChange(viewer.id, a.id, e.target.value)}
+                    />
+                  ) : (
+                    <input
+                      className="mission-note-input"
+                      value={a.note}
+                      placeholder="Add a location or detail…"
+                      onChange={(e) => onNoteChange(viewer.id, a.id, e.target.value)}
+                    />
+                  )
                 ) : (
-                  <span className="mission-note">{a.note || "Location TBD"}</span>
+                  <span className="mission-note">
+                    {a.category === "University Seeding"
+                      ? (a.note ? `${a.note} cans placed` : "No cans logged yet")
+                      : (a.note || "Location TBD")}
+                  </span>
                 )}
               </div>
               {adminMode && (
@@ -1524,6 +1536,12 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
     setLocal(next);
     onUpdateConfig(next);
   }
+  function setCansField(field, value) {
+    const next = { ...local, [field]: value };
+    next.totalCases = Math.round((next.cansGoal || 0) / (next.cansPerCase || 1));
+    setLocal(next);
+    onUpdateConfig(next);
+  }
   function setSplit(category, value) {
     const next = { ...local, splits: { ...local.splits, [category]: Number(value) } };
     setLocal(next);
@@ -1563,12 +1581,21 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
 
       <div className="gen-inputs">
         <label className="gen-field">
-          <span>Cases to distribute this month</span>
+          <span>Monthly can goal</span>
           <input
             className="text-input"
             type="number" min="0"
-            value={local.totalCases}
-            onChange={(e) => setField("totalCases", Math.max(0, parseInt(e.target.value || "0", 10)))}
+            value={local.cansGoal ?? 0}
+            onChange={(e) => setCansField("cansGoal", Math.max(0, parseInt(e.target.value || "0", 10)))}
+          />
+        </label>
+        <label className="gen-field">
+          <span>Cans per case</span>
+          <input
+            className="text-input"
+            type="number" min="1"
+            value={local.cansPerCase ?? 24}
+            onChange={(e) => setCansField("cansPerCase", Math.max(1, parseInt(e.target.value || "1", 10)))}
           />
         </label>
         <label className="gen-field">
@@ -1581,6 +1608,9 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
           />
         </label>
       </div>
+      <p className="muted empty-hint" style={{ marginTop: -6 }}>
+        = {local.totalCases || 0} cases this month
+      </p>
 
       <div className="split-head">
         <span>Pillar split</span>
