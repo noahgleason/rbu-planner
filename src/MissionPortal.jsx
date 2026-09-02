@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Truck, Package, ShieldCheck, ShieldOff, CheckCircle2, Circle, Plus, Trash2,
   Lock, Unlock, Download, X, Users, ClipboardList, Shirt, Refrigerator,
-  ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft
+  ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
+  LayoutDashboard,
 } from "lucide-react";
 import storage from "./storage.js";
 
@@ -843,6 +844,12 @@ export default function MissionPortal() {
 
       <div className="body-grid">
         <aside className="roster-rail" id="tour-roster-rail">
+          <button
+            className={`roster-item roster-item-dashboard ${tab === "dashboard" ? "roster-item-active" : ""}`}
+            onClick={() => setTab("dashboard")}
+          >
+            <span className="roster-name"><LayoutDashboard size={15} /> Dashboard</span>
+          </button>
           <div className="rail-label">{activeTeam.name}</div>
           <nav>
             {activeTeam.roster.map((p) => {
@@ -1110,21 +1117,31 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, onSelectPerso
       </section>
 
       <section className="card">
-        <div className="card-head"><h2><Package size={16} /> Shared logs</h2></div>
-        <div className="dashboard-stats">
-          <div className="dashboard-stat">
-            <span className="dashboard-stat-num">{stillPlaced}</span>
-            <span className="dashboard-stat-label">assets still placed</span>
-          </div>
-          <div className="dashboard-stat">
-            <span className="dashboard-stat-num">{placedAssets.length - stillPlaced}</span>
-            <span className="dashboard-stat-label">retrieved</span>
-          </div>
-          <div className="dashboard-stat">
-            <span className="dashboard-stat-num">{contacts.length}</span>
-            <span className="dashboard-stat-label">contacts logged</span>
-          </div>
+        <div className="card-head">
+          <h2><Refrigerator size={16} /> Placed assets</h2>
+          <Badge>{stillPlaced} of {placedAssets.length} still out</Badge>
         </div>
+        <p className="muted empty-hint">
+          Where team equipment is right now, and who has it — no more "who has the barrel?" texts.
+          {contacts.length > 0 && ` Also ${contacts.length} mission contact${contacts.length > 1 ? "s" : ""} logged.`}
+        </p>
+
+        {placedAssets.length === 0 && <p className="muted empty-hint">Nothing logged yet.</p>}
+
+        <ul className="gear-list">
+          {placedAssets.map((it) => (
+            <li key={it.id} className="gear-row">
+              <div className="gear-text">
+                <span className="gear-primary">{it.asset} — {it.location}</span>
+                <span className="gear-secondary">With {it.placedBy}</span>
+                {it.address && <span className="gear-secondary">{it.address}</span>}
+              </div>
+              <Badge tone={it.status === "placed" ? "good" : "default"}>
+                {it.status === "placed" ? "Still there" : "Brought back"}
+              </Badge>
+            </li>
+          ))}
+        </ul>
       </section>
     </div>
   );
@@ -1923,6 +1940,8 @@ function PortalStyles() {
       }
       .roster-item:hover { background: var(--accent-soft); }
       .roster-item-active { background: var(--accent); color: #fff; font-weight: 600; }
+      .roster-item-dashboard { margin-bottom: 14px; font-weight: 500; }
+      .roster-item-dashboard .roster-name { gap: 8px; }
       .roster-name { display: flex; align-items: center; gap: 6px; }
       .you-tag {
         font-size: 10px;
