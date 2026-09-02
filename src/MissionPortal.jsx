@@ -10,106 +10,146 @@ import storage from "./storage.js";
 // NOTE: this currently seeds real teammate names/quotas from the internal
 // planning sheet, for a live walkthrough with a manager. Swap back to
 // fictional names (see git history) before pushing anywhere public.
-const SEED = {
-  monthLabel: "September 2026 — Lansing Team",
-  windowNote: "Missions due the 2nd · Edits due the 4th",
-  adminPasscode: "changeme",
-  // Mirrors the "PLANNING FORMULA" section of the original sheet: total cases
-  // in, an occasion split, a cases-per-mission constant -> missions needed.
-  planningConfig: {
-    // The real input is a monthly can goal; cansPerCase converts it to cases,
-    // then casesPerMission converts cases to missions needed.
-    cansGoal: 12300,
+const CATEGORY_ORDER = [
+  "Study", "Work", "Party & Socialize", "Sports", "Fitness", "Gaming",
+  "Sales Support", "University Seeding",
+];
+
+function emptyPlanningConfig() {
+  return {
+    cansGoal: 0,
     cansPerCase: 24,
-    totalCases: 513,
+    totalCases: 0,
     casesPerMission: 15,
-    splits: {
-      "Study": 33,
-      "Work": 19,
-      "Party & Socialize": 21,
-      "Sports": 6,
-      "Fitness": 9,
-      "Gaming": 12,
-      "Sales Support": 0,
-      "University Seeding": 0,
-    },
-    // Guaranteed picks applied before the random balanced split — e.g. someone
-    // who specifically asked for more Gaming missions this month.
+    splits: Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])),
     pins: [],
-  },
-  catalog: [
-    { id: "c1", category: "Study", available: 10, remaining: 1 },
-    { id: "c2", category: "Work", available: 6, remaining: 2 },
-    { id: "c3", category: "Party & Socialize", available: 6, remaining: 0 },
-    { id: "c4", category: "Sports", available: 2, remaining: 0 },
-    { id: "c5", category: "Fitness", available: 3, remaining: 0 },
-    { id: "c6", category: "Gaming", available: 3, remaining: 0 },
-    { id: "c10", category: "Sales Support", available: 2, remaining: 2 },
-    { id: "c11", category: "University Seeding", available: 0, remaining: 0 },
+  };
+}
+
+function emptyCatalog() {
+  return CATEGORY_ORDER.map((category, i) => ({ id: `c${i}`, category, available: 0, remaining: 0 }));
+}
+
+const SEED = {
+  adminPasscode: "changeme",
+  // Which team's roster/quotas/missions are showing — team-specific data
+  // lives under `teams`; gear, contacts, and clothing stock are shared
+  // across every team, since they track physical assets, not a roster.
+  teams: [
+    {
+      id: "lansing",
+      name: "Lansing Team",
+      monthLabel: "September 2026 — Lansing Team",
+      windowNote: "Missions due the 2nd · Edits due the 4th",
+      // Mirrors the "PLANNING FORMULA" section of the original sheet: a
+      // monthly can goal converts to cases, cases convert to missions
+      // needed, missions split by occasion.
+      planningConfig: {
+        cansGoal: 12300,
+        cansPerCase: 24,
+        totalCases: 513,
+        casesPerMission: 15,
+        splits: {
+          "Study": 33,
+          "Work": 19,
+          "Party & Socialize": 21,
+          "Sports": 6,
+          "Fitness": 9,
+          "Gaming": 12,
+          "Sales Support": 0,
+          "University Seeding": 0,
+        },
+        // Guaranteed picks applied before the random balanced split — e.g.
+        // someone who specifically asked for more Gaming missions.
+        pins: [],
+      },
+      catalog: [
+        { id: "c1", category: "Study", available: 10, remaining: 1 },
+        { id: "c2", category: "Work", available: 6, remaining: 2 },
+        { id: "c3", category: "Party & Socialize", available: 6, remaining: 0 },
+        { id: "c4", category: "Sports", available: 2, remaining: 0 },
+        { id: "c5", category: "Fitness", available: 3, remaining: 0 },
+        { id: "c6", category: "Gaming", available: 3, remaining: 0 },
+        { id: "c10", category: "Sales Support", available: 2, remaining: 2 },
+        { id: "c11", category: "University Seeding", available: 0, remaining: 0 },
+      ],
+      roster: [
+        { id: "p1", name: "Will Kent", priority: 2 },
+        { id: "p2", name: "Sophia Marcukaitis", priority: 2 },
+        { id: "p3", name: "Noah Gleason", priority: 2 },
+        { id: "p4", name: "Vivian Tieu", priority: 2 },
+        { id: "p5", name: "Emilia Djuric", priority: 2 },
+      ],
+      assignments: {
+        p1: [
+          { id: "a1", category: "Study", note: "Main campus library", done: false },
+          { id: "a2", category: "Party & Socialize", note: "Homecoming tailgate", done: false },
+          { id: "a3", category: "Gaming", note: "Campus esports lounge", done: false },
+        ],
+        p2: [
+          { id: "a4", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a5", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a6", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+          { id: "a7", category: "Party & Socialize", note: "Events of your finding", done: false },
+          { id: "a8", category: "Party & Socialize", note: "Events of your finding", done: false },
+          { id: "a9", category: "Fitness", note: "Gym near west campus", done: false },
+        ],
+        p3: [
+          { id: "a10", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a11", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a12", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+          { id: "a13", category: "Party & Socialize", note: "Events of your finding", done: false },
+          { id: "a14", category: "Sports", note: "Local sports event, TBD", done: false },
+          { id: "a15", category: "Gaming", note: "Gaming store, during busy hours", done: false },
+        ],
+        p4: [
+          { id: "a16", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a17", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a18", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+          { id: "a19", category: "Party & Socialize", note: "Events of your finding", done: false },
+          { id: "a20", category: "Sports", note: "Intramural fields on campus", done: false },
+          { id: "a21", category: "Fitness", note: "Fitness event, TBD", done: false },
+        ],
+        p5: [
+          { id: "a22", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a23", category: "Study", note: "Study lounge (2x)", done: false },
+          { id: "a24", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
+          { id: "a25", category: "Party & Socialize", note: "Events of your finding", done: false },
+          { id: "a26", category: "Fitness", note: "Fitness places nearby", done: false },
+          { id: "a27", category: "Gaming", note: "Gaming store / event", done: false },
+        ],
+      },
+      inventory: {
+        p1: { clothing: [], other: [] },
+        p2: { clothing: [], other: [] },
+        p3: { clothing: [], other: [] },
+        p4: { clothing: [], other: [] },
+        p5: { clothing: [], other: [] },
+      },
+    },
+    {
+      id: "gr",
+      name: "GR Team",
+      monthLabel: "September 2026 — GR Team",
+      windowNote: "Missions due the 2nd · Edits due the 4th",
+      planningConfig: emptyPlanningConfig(),
+      catalog: emptyCatalog(),
+      roster: [],
+      assignments: {},
+      inventory: {},
+    },
   ],
-  roster: [
-    { id: "p1", name: "Will Kent", priority: 2 },
-    { id: "p2", name: "Sophia Marcukaitis", priority: 2 },
-    { id: "p3", name: "Noah Gleason", priority: 2 },
-    { id: "p4", name: "Vivian Tieu", priority: 2 },
-    { id: "p5", name: "Emilia Djuric", priority: 2 },
-  ],
-  assignments: {
-    p1: [
-      { id: "a1", category: "Study", note: "Main campus library", done: false },
-      { id: "a2", category: "Party & Socialize", note: "Homecoming tailgate", done: false },
-      { id: "a3", category: "Gaming", note: "Campus esports lounge", done: false },
-    ],
-    p2: [
-      { id: "a4", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a5", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a6", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a7", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a8", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a9", category: "Fitness", note: "Gym near west campus", done: false },
-    ],
-    p3: [
-      { id: "a10", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a11", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a12", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a13", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a14", category: "Sports", note: "Local sports event, TBD", done: false },
-      { id: "a15", category: "Gaming", note: "Gaming store, during busy hours", done: false },
-    ],
-    p4: [
-      { id: "a16", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a17", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a18", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a19", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a20", category: "Sports", note: "Intramural fields on campus", done: false },
-      { id: "a21", category: "Fitness", note: "Fitness event, TBD", done: false },
-    ],
-    p5: [
-      { id: "a22", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a23", category: "Study", note: "Study lounge (2x)", done: false },
-      { id: "a24", category: "Work", note: "Workplaces of your choice (new venues)", done: false },
-      { id: "a25", category: "Party & Socialize", note: "Events of your finding", done: false },
-      { id: "a26", category: "Fitness", note: "Fitness places nearby", done: false },
-      { id: "a27", category: "Gaming", note: "Gaming store / event", done: false },
-    ],
-  },
-  inventory: {
-    p1: { clothing: [], other: [] },
-    p2: { clothing: [], other: [] },
-    p3: { clothing: [], other: [] },
-    p4: { clothing: [], other: [] },
-    p5: { clothing: [], other: [] },
-  },
-  // Team-wide (not per-person) logs.
+  // Team-wide (not per-person, not per-team) logs — these track physical
+  // assets and contacts, which any team member from either team might place
+  // or pick up, so they're shared rather than duplicated per team.
   placedAssets: [
-    { id: "pa1", asset: "Mini Fridge", location: "Sample Venue", address: "", placedBy: "p1", status: "placed", notes: "" },
+    { id: "pa1", asset: "Mini Fridge", location: "Sample Venue", placedBy: "Will Kent", status: "placed", notes: "" },
   ],
   missionContacts: [],
   clothingStock: { S: 4, M: 10, L: 8, XL: 3 },
 };
 
-const STORAGE_KEY = "redbull-mission-portal-v3";
-const CATEGORY_ORDER = SEED.catalog.map((c) => c.category);
+const STORAGE_KEY = "redbull-mission-portal-v4";
 const PRIORITY_LABELS = { 1: "Low", 2: "Standard", 3: "High" };
 const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
 const CLOTHING_SIZES = ["S", "M", "L", "XL"];
@@ -425,6 +465,7 @@ export default function MissionPortal() {
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved
   const [myId, setMyId] = useState(null);
   const [viewId, setViewId] = useState(null);
+  const [activeTeamId, setActiveTeamId] = useState(null);
   const [tab, setTab] = useState("missions");
   const [adminMode, setAdminMode] = useState(false);
   const [showPasscode, setShowPasscode] = useState(false);
@@ -443,9 +484,12 @@ export default function MissionPortal() {
     (async () => {
       const [d, id] = await Promise.all([loadData(), loadIdentity()]);
       setData(d);
-      if (id && d.roster.find((r) => r.id === id)) {
+      setActiveTeamId(d.teams[0].id);
+      const homeTeam = id && d.teams.find((t) => t.roster.find((r) => r.id === id));
+      if (homeTeam) {
         setMyId(id);
         setViewId(id);
+        setActiveTeamId(homeTeam.id);
       } else {
         setShowIdentityPicker(true);
       }
@@ -499,7 +543,7 @@ export default function MissionPortal() {
   }
 
   function saveMonthLabel() {
-    if (monthDraft.trim()) commit({ ...data, monthLabel: monthDraft.trim() });
+    if (monthDraft.trim()) commitTeam({ monthLabel: monthDraft.trim() });
     setEditingMonth(false);
   }
 
@@ -524,7 +568,23 @@ export default function MissionPortal() {
     );
   }
 
-  const viewer = data.roster.find((r) => r.id === viewId) || null;
+  const activeTeam = data.teams.find((t) => t.id === activeTeamId) || data.teams[0];
+
+  // Applies a patch (object, or updater function receiving the current team)
+  // to whichever team is active, and commits the whole document.
+  function commitTeam(patch) {
+    const nextTeams = data.teams.map((t) =>
+      t.id === activeTeam.id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t
+    );
+    commit({ ...data, teams: nextTeams });
+  }
+
+  function switchTeam(id) {
+    setActiveTeamId(id);
+    setViewId(null);
+  }
+
+  const viewer = activeTeam.roster.find((r) => r.id === viewId) || null;
   const isViewingSelf = viewId === myId;
 
   function pickIdentity(id) {
@@ -545,26 +605,24 @@ export default function MissionPortal() {
     }
   }
 
-  // ---- roster mutations ----
+  // ---- roster mutations (scoped to the active team) ----
   function addMember(name) {
     const id = uid("p");
-    const next = {
-      ...data,
-      roster: [...data.roster, { id, name }],
-      assignments: { ...data.assignments, [id]: [] },
-      inventory: { ...data.inventory, [id]: emptyInventory() },
-    };
-    commit(next);
+    commitTeam((t) => ({
+      roster: [...t.roster, { id, name }],
+      assignments: { ...t.assignments, [id]: [] },
+      inventory: { ...t.inventory, [id]: emptyInventory() },
+    }));
     return id;
   }
 
   function removeMember(id) {
-    const roster = data.roster.filter((r) => r.id !== id);
-    const assignments = { ...data.assignments };
-    const inventory = { ...data.inventory };
+    const roster = activeTeam.roster.filter((r) => r.id !== id);
+    const assignments = { ...activeTeam.assignments };
+    const inventory = { ...activeTeam.inventory };
     delete assignments[id];
     delete inventory[id];
-    commit({ ...data, roster, assignments, inventory });
+    commitTeam({ roster, assignments, inventory });
     if (viewId === id) setViewId(roster[0] ? roster[0].id : null);
     if (myId === id) {
       setMyId(null);
@@ -572,59 +630,62 @@ export default function MissionPortal() {
     }
   }
 
-  // ---- catalog mutations ----
+  // ---- catalog mutations (scoped to the active team) ----
   function updateCatalog(id, field, value) {
-    const catalog = data.catalog.map((c) => (c.id === id ? { ...c, [field]: value } : c));
-    commit({ ...data, catalog });
+    commitTeam((t) => ({ catalog: t.catalog.map((c) => (c.id === id ? { ...c, [field]: value } : c)) }));
   }
 
   function updatePlanningConfig(next) {
-    commit({ ...data, planningConfig: next });
+    commitTeam({ planningConfig: next });
   }
 
   function updatePriority(personId, priority) {
-    const roster = data.roster.map((p) => (p.id === personId ? { ...p, priority } : p));
-    commit({ ...data, roster });
+    commitTeam((t) => ({ roster: t.roster.map((p) => (p.id === personId ? { ...p, priority } : p)) }));
   }
 
   function runGeneratePlan() {
-    const { catalog, assignments } = generateMissionPlan(data.planningConfig, data.roster);
-    commit({ ...data, catalog, assignments });
+    const { catalog, assignments } = generateMissionPlan(activeTeam.planningConfig, activeTeam.roster);
+    commitTeam({ catalog, assignments });
   }
 
   function updateAssignmentNote(personId, aid, note) {
-    const list = (data.assignments[personId] || []).map((a) => (a.id === aid ? { ...a, note } : a));
-    commit({ ...data, assignments: { ...data.assignments, [personId]: list } });
+    commitTeam((t) => ({
+      assignments: { ...t.assignments, [personId]: (t.assignments[personId] || []).map((a) => (a.id === aid ? { ...a, note } : a)) },
+    }));
   }
 
-  // ---- assignment mutations ----
+  // ---- assignment mutations (scoped to the active team) ----
   function addAssignment(personId, category, note) {
-    const list = data.assignments[personId] || [];
-    const next = { ...data.assignments, [personId]: [...list, { id: uid("a"), category, note, done: false }] };
-    commit({ ...data, assignments: next });
+    commitTeam((t) => ({
+      assignments: { ...t.assignments, [personId]: [...(t.assignments[personId] || []), { id: uid("a"), category, note, done: false }] },
+    }));
   }
 
   function toggleAssignment(personId, aid) {
-    const list = (data.assignments[personId] || []).map((a) => (a.id === aid ? { ...a, done: !a.done } : a));
-    commit({ ...data, assignments: { ...data.assignments, [personId]: list } });
+    commitTeam((t) => ({
+      assignments: { ...t.assignments, [personId]: (t.assignments[personId] || []).map((a) => (a.id === aid ? { ...a, done: !a.done } : a)) },
+    }));
   }
 
   function removeAssignment(personId, aid) {
-    const list = (data.assignments[personId] || []).filter((a) => a.id !== aid);
-    commit({ ...data, assignments: { ...data.assignments, [personId]: list } });
+    commitTeam((t) => ({
+      assignments: { ...t.assignments, [personId]: (t.assignments[personId] || []).filter((a) => a.id !== aid) },
+    }));
   }
 
-  // ---- inventory mutations ----
+  // ---- inventory mutations (scoped to the active team) ----
   function addInventoryItem(personId, bucket, item) {
-    const inv = data.inventory[personId] || emptyInventory();
-    const nextBucket = [...(inv[bucket] || []), { id: uid("i"), ...item }];
-    commit({ ...data, inventory: { ...data.inventory, [personId]: { ...inv, [bucket]: nextBucket } } });
+    commitTeam((t) => {
+      const inv = t.inventory[personId] || emptyInventory();
+      return { inventory: { ...t.inventory, [personId]: { ...inv, [bucket]: [...(inv[bucket] || []), { id: uid("i"), ...item }] } } };
+    });
   }
 
   function removeInventoryItem(personId, bucket, itemId) {
-    const inv = data.inventory[personId] || emptyInventory();
-    const nextBucket = (inv[bucket] || []).filter((x) => x.id !== itemId);
-    commit({ ...data, inventory: { ...data.inventory, [personId]: { ...inv, [bucket]: nextBucket } } });
+    commitTeam((t) => {
+      const inv = t.inventory[personId] || emptyInventory();
+      return { inventory: { ...t.inventory, [personId]: { ...inv, [bucket]: (inv[bucket] || []).filter((x) => x.id !== itemId) } } };
+    });
   }
 
   // ---- placed-asset mutations (team-wide) ----
@@ -659,8 +720,8 @@ export default function MissionPortal() {
 
   function exportCsv() {
     const rows = [["Name", "Category", "Note", "Done"]];
-    data.roster.forEach((p) => {
-      (data.assignments[p.id] || []).forEach((a) => {
+    activeTeam.roster.forEach((p) => {
+      (activeTeam.assignments[p.id] || []).forEach((a) => {
         rows.push([p.name, a.category, a.note, a.done ? "Yes" : "No"]);
       });
     });
@@ -669,7 +730,7 @@ export default function MissionPortal() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${data.monthLabel.replace(/[^\w]+/g, "-")}-missions.csv`;
+    a.download = `${activeTeam.monthLabel.replace(/[^\w]+/g, "-")}-missions.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -680,7 +741,7 @@ export default function MissionPortal() {
 
       {showIdentityPicker && (
         <IdentityModal
-          roster={data.roster}
+          roster={activeTeam.roster}
           onPick={pickIdentity}
           onCreate={(name) => {
             const id = addMember(name);
@@ -734,15 +795,23 @@ export default function MissionPortal() {
                 className={`brand-sub ${adminMode ? "brand-sub-editable" : ""}`}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (adminMode) { setMonthDraft(data.monthLabel); setEditingMonth(true); }
+                  if (adminMode) { setMonthDraft(activeTeam.monthLabel); setEditingMonth(true); }
                 }}
               >
-                {data.monthLabel}
+                {activeTeam.monthLabel}
                 {adminMode && <Pencil size={11} />}
               </div>
             )}
           </div>
         </div>
+        <select
+          className="team-switcher"
+          id="tour-team-switcher"
+          value={activeTeam.id}
+          onChange={(e) => switchTeam(e.target.value)}
+        >
+          {data.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
         <nav className="top-nav" id="tour-nav">
           <TabBtn active={tab === "missions"} onClick={() => setTab("missions")} icon={<ClipboardList size={15} />} label="Missions" />
           <TabBtn active={tab === "gear"} onClick={() => setTab("gear")} icon={<Package size={15} />} label="Gear & placements" />
@@ -767,17 +836,17 @@ export default function MissionPortal() {
             </button>
           )}
           <button className="btn btn-ghost" onClick={() => setShowIdentityPicker(true)}>
-            {myId ? data.roster.find((r) => r.id === myId)?.name || "Switch" : "Who are you?"}
+            {myId ? data.teams.flatMap((t) => t.roster).find((r) => r.id === myId)?.name || "Switch" : "Who are you?"}
           </button>
         </div>
       </header>
 
       <div className="body-grid">
         <aside className="roster-rail" id="tour-roster-rail">
-          <div className="rail-label">Team</div>
+          <div className="rail-label">{activeTeam.name}</div>
           <nav>
-            {data.roster.map((p) => {
-              const list = data.assignments[p.id] || [];
+            {activeTeam.roster.map((p) => {
+              const list = activeTeam.assignments[p.id] || [];
               const done = list.filter((a) => a.done).length;
               return (
                 <button
@@ -797,8 +866,10 @@ export default function MissionPortal() {
         <main className="main-panel">
           {tab === "dashboard" && (
             <DashboardTab
-              data={data}
+              data={activeTeam}
               myId={myId}
+              placedAssets={data.placedAssets || []}
+              missionContacts={data.missionContacts || []}
               onSelectPerson={(id) => { setViewId(id); setTab("missions"); }}
             />
           )}
@@ -812,7 +883,7 @@ export default function MissionPortal() {
 
           {viewer && tab === "missions" && (
             <MissionsTab
-              data={data}
+              data={activeTeam}
               viewer={viewer}
               adminMode={adminMode}
               canEditNotes={adminMode || isViewingSelf}
@@ -826,9 +897,8 @@ export default function MissionPortal() {
           {viewer && tab === "gear" && (
             <GearTab
               viewer={viewer}
-              roster={data.roster}
-              placedBy={myId || viewer.id}
-              inventory={data.inventory[viewer.id] || emptyInventory()}
+              placedByName={viewer.name}
+              inventory={activeTeam.inventory[viewer.id] || emptyInventory()}
               placedAssets={data.placedAssets || []}
               missionContacts={data.missionContacts || []}
               clothingStock={data.clothingStock || {}}
@@ -844,11 +914,12 @@ export default function MissionPortal() {
 
           {adminMode && tab === "team" && (
             <TeamTab
-              data={data}
+              data={activeTeam}
+              clothingStock={data.clothingStock || {}}
               onUpdateCatalog={updateCatalog}
               onRemoveMember={removeMember}
               onExport={exportCsv}
-              onUpdateMeta={(field, value) => commit({ ...data, [field]: value })}
+              onUpdateMeta={(field, value) => commitTeam({ [field]: value })}
               onUpdatePlanningConfig={updatePlanningConfig}
               onUpdatePriority={updatePriority}
               onGeneratePlan={runGeneratePlan}
@@ -986,13 +1057,12 @@ function AddMemberInline({ onAdd }) {
   );
 }
 
-function DashboardTab({ data, myId, onSelectPerson }) {
+function DashboardTab({ data, myId, placedAssets, missionContacts, onSelectPerson }) {
   const roster = data.roster;
   const totalAssigned = roster.reduce((s, p) => s + (data.assignments[p.id] || []).length, 0);
   const totalDone = roster.reduce((s, p) => s + (data.assignments[p.id] || []).filter((a) => a.done).length, 0);
-  const placedAssets = data.placedAssets || [];
   const stillPlaced = placedAssets.filter((a) => a.status === "placed").length;
-  const contacts = data.missionContacts || [];
+  const contacts = missionContacts;
 
   return (
     <div className="tab-content">
@@ -1163,7 +1233,7 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
 }
 
 function GearTab({
-  viewer, roster, placedBy, inventory, placedAssets, missionContacts, clothingStock,
+  viewer, placedByName, inventory, placedAssets, missionContacts, clothingStock,
   onAdd, onRemove, onAddAsset, onRemoveAsset, onToggleAssetStatus, onAddContact, onRemoveContact,
 }) {
   const stockLine = CLOTHING_SIZES.map((s) => `${s} ${clothingStock[s] ?? 0}`).join(" · ");
@@ -1172,8 +1242,7 @@ function GearTab({
     <div className="tab-content">
       <PlacedAssetsSection
         items={placedAssets}
-        roster={roster}
-        placedBy={placedBy}
+        placedByName={placedByName}
         onAdd={onAddAsset}
         onRemove={onRemoveAsset}
         onToggleStatus={onToggleAssetStatus}
@@ -1243,20 +1312,16 @@ function GearTab({
   );
 }
 
-function PlacedAssetsSection({ items, roster, placedBy, onAdd, onRemove, onToggleStatus }) {
+function PlacedAssetsSection({ items, placedByName, onAdd, onRemove, onToggleStatus }) {
   const blankForm = { asset: ASSET_TYPES[0], location: "", address: "", notes: "" };
   const [form, setForm] = useState(blankForm);
   const [adding, setAdding] = useState(false);
 
   function submit() {
     if (!form.location.trim()) return;
-    onAdd({ ...form, placedBy, status: "placed" });
+    onAdd({ ...form, placedBy: placedByName, status: "placed" });
     setForm(blankForm);
     setAdding(false);
-  }
-
-  function personName(id) {
-    return roster.find((r) => r.id === id)?.name || "Unknown";
   }
 
   return (
@@ -1275,7 +1340,7 @@ function PlacedAssetsSection({ items, roster, placedBy, onAdd, onRemove, onToggl
             <div className="gear-text">
               <span className="gear-primary">{it.asset} — {it.location}</span>
               {it.address && <span className="gear-secondary">{it.address}</span>}
-              <span className="gear-secondary">Placed by {personName(it.placedBy)}</span>
+              <span className="gear-secondary">Placed by {it.placedBy}</span>
               {it.notes && <span className="gear-notes">{it.notes}</span>}
             </div>
             <div className="gear-actions">
@@ -1362,7 +1427,7 @@ function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem, 
   );
 }
 
-function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority, onGeneratePlan, addMember, onUpdateClothingStock }) {
+function TeamTab({ data, clothingStock, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority, onGeneratePlan, addMember, onUpdateClothingStock }) {
   const [editingMeta, setEditingMeta] = useState(false);
   const [monthLabel, setMonthLabel] = useState(data.monthLabel);
   const [windowNote, setWindowNote] = useState(data.windowNote);
@@ -1443,7 +1508,7 @@ function TeamTab({ data, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta
               <input
                 className="text-input text-input-num"
                 type="number" min="0"
-                value={data.clothingStock?.[size] ?? 0}
+                value={clothingStock?.[size] ?? 0}
                 onChange={(e) => onUpdateClothingStock(size, Math.max(0, parseInt(e.target.value || "0", 10)))}
               />
             </label>
@@ -1731,6 +1796,18 @@ function PortalStyles() {
       .brand { display: flex; align-items: center; gap: 10px; }
       .brand-clickable { cursor: pointer; border-radius: 8px; }
       .brand-clickable:hover { opacity: 0.85; }
+      .team-switcher {
+        background: rgba(255,255,255,0.08);
+        border: 1.5px solid rgba(255,255,255,0.25);
+        color: #fff;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 12.5px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      .team-switcher:hover { border-color: rgba(255,255,255,0.5); }
+      .team-switcher option { color: var(--ink); }
       .top-nav { display: flex; align-items: center; gap: 4px; flex: 1; }
       .top-nav-btn {
         display: flex; align-items: center; gap: 6px;

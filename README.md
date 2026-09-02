@@ -14,6 +14,11 @@ or endorsed by any employer or brand.
 
 ## What it does
 
+- **Multiple teams:** a team switcher next to the month label swaps between
+  independent rosters, quotas, and mission plans (e.g. Lansing / GR) — each
+  team plans separately, while the gear log, mission contacts, and clothing
+  stock stay shared across all of them, since those track physical assets
+  rather than a roster.
 - **Plan generator (admin):** enter the total units to distribute and the
   split across mission "pillars" (categories); the app computes how many
   missions are needed. Admins can pin specific categories to specific people
