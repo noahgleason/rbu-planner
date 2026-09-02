@@ -859,7 +859,7 @@ export default function MissionPortal() {
                 <button
                   key={p.id}
                   className={`roster-item ${viewId === p.id ? "roster-item-active" : ""}`}
-                  onClick={() => setViewId(p.id)}
+                  onClick={() => { setViewId(p.id); setTab("missions"); }}
                 >
                   <span className="roster-name">{p.name}{p.id === myId && <span className="you-tag">you</span>}</span>
                   <span className="roster-progress">{done}/{list.length}</span>
