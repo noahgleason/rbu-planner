@@ -13,24 +13,29 @@ import storage, {
 // NOTE: this currently seeds real teammate names/quotas from the internal
 // planning sheet, for a live walkthrough with a manager. Swap back to
 // fictional names (see git history) before pushing anywhere public.
-const CATEGORY_ORDER = [
+//
+// Occasions are a per-team editable list now (see migrateTeamShape below) —
+// this is only the starter list for a brand-new team, seeded with all 11
+// pillars from the planning sheet (a migrated team keeps whatever subset its
+// old catalog actually used; nothing is added to real data automatically).
+const DEFAULT_OCCASIONS = [
   "Study", "Work", "Party & Socialize", "Sports", "Fitness", "Gaming",
-  "Sales Support", "University Seeding",
+  "Festivals", "Shopping", "Leisure", "Sales Support", "University Seeding",
 ];
 
-function emptyPlanningConfig() {
+function emptyPlanningConfig(occasions = DEFAULT_OCCASIONS) {
   return {
     cansGoal: 0,
     cansPerCase: 24,
     totalCases: 0,
     casesPerMission: 15,
-    splits: Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])),
+    splits: Object.fromEntries(occasions.map((c) => [c, 0])),
     pins: [],
   };
 }
 
-function emptyCatalog() {
-  return CATEGORY_ORDER.map((category, i) => ({ id: `c${i}`, category, available: 0, remaining: 0 }));
+function emptyCatalog(occasions = DEFAULT_OCCASIONS) {
+  return occasions.map((category, i) => ({ id: `c${i}`, category, available: 0, remaining: 0 }));
 }
 
 const SEED = {
@@ -155,6 +160,108 @@ const PRIORITY_LABELS = { 1: "Low", 2: "Standard", 3: "High" };
 const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
 const CLOTHING_SIZES = ["S", "M", "L", "XL"];
 
+// ---------- Mission model ----------
+// A mission's `kind` follows from its occasion — sampling is the default,
+// with the two other current pillars breaking out into their own kind so
+// reporting (Phase 4) can bucket hours/cases correctly. 'seeding' as a
+// kind is set aside for Phase 3's per-SM auto-created seeding missions.
+function occasionKind(occasion) {
+  if (occasion === "University Seeding") return "seeding";
+  if (occasion === "Sales Support") return "sales_support";
+  return "sampling";
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function currentMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseMonthLabel(label) {
+  const m = /([A-Za-z]+)\s+(\d{4})/.exec(label || "");
+  if (!m) return null;
+  const idx = MONTH_NAMES.findIndex((n) => n.toLowerCase() === m[1].toLowerCase());
+  if (idx === -1) return null;
+  return `${m[2]}-${String(idx + 1).padStart(2, "0")}`;
+}
+
+function fillSplits(splits, occasions) {
+  const out = {};
+  occasions.forEach((o) => { out[o] = (splits && splits[o]) || 0; });
+  return out;
+}
+
+// One-time, idempotent, self-healing shape upgrade: v4's per-team
+// {catalog, assignments: {personId: [...]}} becomes v5's {occasions,
+// missions: Mission[]} (see the brief's Mission interface). Runs on every
+// team on every load — a team that already has `missions` passes straight
+// through, so this is cheap once migrated, and it also upgrades a team
+// coming straight from SEED (which is still written in the old shape,
+// since it doubles as "what a legacy blob looks like").
+function migrateTeamShape(team) {
+  if (team.missions) return team;
+
+  const occasions = team.catalog ? team.catalog.map((c) => c.category) : DEFAULT_OCCASIONS;
+  const month = parseMonthLabel(team.monthLabel) || currentMonthKey();
+  const now = new Date().toISOString();
+  const defaultCases = team.planningConfig?.casesPerMission || 15;
+  const missions = [];
+
+  Object.entries(team.assignments || {}).forEach(([personId, list]) => {
+    (list || []).forEach((a) => {
+      missions.push({
+        id: a.id, teamId: team.id, month, occasion: a.category, kind: occasionKind(a.category),
+        assigneeIds: [personId], directive: a.note || "", location: "", date: "",
+        plannedCases: defaultCases, status: a.done ? "completed" : "draft",
+        createdAt: now, updatedAt: now, updatedBy: "migration",
+      });
+    });
+  });
+
+  // Old-style pins (a standing "guarantee this category to this person on
+  // every future generate" rule) become one-time realized draft missions —
+  // per the brief, generation itself no longer carries that guarantee
+  // forward automatically.
+  (team.planningConfig?.pins || []).forEach((pin) => {
+    for (let i = 0; i < (pin.count || 0); i++) {
+      missions.push({
+        id: uid("m"), teamId: team.id, month, occasion: pin.category, kind: occasionKind(pin.category),
+        assigneeIds: pin.personId ? [pin.personId] : [], directive: "Pinned", location: "", date: "",
+        plannedCases: defaultCases, status: "draft",
+        createdAt: now, updatedAt: now, updatedBy: "migration",
+      });
+    }
+  });
+
+  const { catalog, assignments, ...rest } = team;
+  return {
+    ...rest,
+    occasions,
+    month,
+    deadlines: { missionsDue: null, editsDue: null },
+    planningConfig: { ...team.planningConfig, splits: fillSplits(team.planningConfig?.splits, occasions), pins: [] },
+    missions,
+  };
+}
+
+// Read-only summary row per occasion — replaces the old hand-edited
+// available/remaining catalog. `planned` is the same round(total * split%)
+// formula the generator uses; `assigned` counts real missions that exist
+// right now (any status except cancelled); `remaining` is never negative.
+function computeQuotaSummary(team) {
+  const totalMissions = Math.max(0, Math.round((team.planningConfig?.totalCases || 0) / (team.planningConfig?.casesPerMission || 1)));
+  return (team.occasions || []).map((occasion) => {
+    const pct = team.planningConfig?.splits?.[occasion] || 0;
+    const planned = Math.round(totalMissions * (pct / 100));
+    const assigned = team.missions.filter((m) => m.occasion === occasion && m.status !== "cancelled").length;
+    return { occasion, planned, assigned, remaining: Math.max(0, planned - assigned) };
+  });
+}
+
 // ---------- Guided tutorial ----------
 // Steps that always apply, regardless of admin status.
 const TOUR_STEPS_BASE = [
@@ -238,25 +345,37 @@ const ADMIN_TOUR_STEPS = [
     target: "#tour-planning-header",
     setup: (ctx) => ctx.setTab("team"),
     title: "Planning header",
-    body: "Set the month label and the deadline note shown to the whole team. You can also edit the month directly from the top bar.",
+    body: "Set the month label, the deadline note shown to the whole team, and the actual missions-due/edits-due dates — once those pass, the dashboard flags anything still missing a location, and non-admins can no longer edit their own location.",
+  },
+  {
+    target: "#tour-occasions-card",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Occasions",
+    body: "The pillars this team plans against — add or remove them here (you can't remove one still in use by a mission). Every split, filter, and mission picker below pulls from this list.",
   },
   {
     target: "#tour-generator-card",
     setup: (ctx) => ctx.setTab("team"),
     title: "Generate the plan",
-    body: "Enter the total cases you were given and the percentage split across categories — this is what determines how many missions get created and of what kind.",
+    body: "Enter the total cases you were given and the percentage split across occasions, then preview — this only fills the gap between the target and what you've already hand-edited, so re-running never wipes out real work.",
   },
   {
     target: "#tour-favorites",
     setup: (ctx) => ctx.setTab("team"),
     title: "Favorites",
-    body: "Pin a specific category to a specific person before generating — useful when someone's asked for more of something they like. Everything left over is still split randomly by priority.",
+    body: "Pin a specific occasion to a specific person before generating — useful when someone's asked for more of something they like. Everything left over is still split randomly by priority.",
   },
   {
     target: "#tour-quotas-card",
     setup: (ctx) => ctx.setTab("team"),
     title: "Mission quotas",
-    body: "These fill in automatically when you generate a plan, but you can fine-tune available/remaining counts by hand here too — and export the current list to CSV.",
+    body: "A read-only summary computed live from the real missions below — planned vs. assigned vs. still remaining per occasion — plus the CSV export.",
+  },
+  {
+    target: "#tour-plan-table-card",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Missions",
+    body: "Every mission, editable inline — person, occasion, directive from the BMS, partner, date, location, and done status. Filter by occasion, status, or unassigned-only to work through the month in one sitting.",
   },
   {
     target: "#tour-roster-manage-card",
@@ -314,48 +433,66 @@ function distributeRandomBalanced(count, weights) {
 }
 
 // Turns "total cases this month" + occasion splits + team priorities (plus
-// any manually-pinned favorites) into a fresh catalog and a fresh set of
-// (unassigned-location) mission slots.
-function generateMissionPlan(config, roster) {
+// any manually-pinned favorites) into a *preview* of what generating would
+// do — never applied directly. A mission only counts as replaceable if it's
+// still an untouched draft (generator-made, no directive yet); anything an
+// admin has edited, completed, or hand-added is always kept, and re-running
+// generate only tops up the gap between the target count and what's kept.
+// applyGeneratedPlan (below) turns this preview into the actual missions
+// array once the admin confirms it.
+function planGeneration(config, roster, occasions, existingMissions, month, actorName) {
   const totalMissions = Math.max(0, Math.round(config.totalCases / (config.casesPerMission || 1)));
   const weights = roster.map((p) => p.priority || 1);
   const pins = config.pins || [];
+  const now = new Date().toISOString();
 
-  const catalog = [];
-  const assignments = {};
-  roster.forEach((p) => { assignments[p.id] = []; });
+  const removeIds = [];
+  const toAdd = [];
+  let keptCount = 0;
 
-  CATEGORY_ORDER.forEach((category) => {
-    const pct = config.splits[category] || 0;
-    const missionsForCategory = Math.round(totalMissions * (pct / 100));
-    catalog.push({ id: uid("c"), category, available: missionsForCategory, remaining: missionsForCategory });
-    if (missionsForCategory <= 0) return;
+  occasions.forEach((occasion) => {
+    const pct = config.splits[occasion] || 0;
+    const target = Math.round(totalMissions * (pct / 100));
+    const forOccasion = existingMissions.filter((m) => m.occasion === occasion);
+    const untouchedDrafts = forOccasion.filter((m) => m.status === "draft" && !m.directive.trim());
+    const kept = forOccasion.length - untouchedDrafts.length;
+    keptCount += kept;
+    untouchedDrafts.forEach((m) => removeIds.push(m.id));
+
+    const needed = Math.max(0, target - kept);
+    if (needed <= 0) return;
 
     const perPerson = roster.map(() => 0);
-    let remaining = missionsForCategory;
-
-    // Guaranteed picks first (e.g. someone who asked for this category).
-    pins.filter((pin) => pin.category === category).forEach((pin) => {
+    let remaining = needed;
+    pins.filter((pin) => pin.occasion === occasion).forEach((pin) => {
       const idx = roster.findIndex((p) => p.id === pin.personId);
       if (idx === -1 || remaining <= 0) return;
       const give = Math.min(pin.count, remaining);
       perPerson[idx] += give;
       remaining -= give;
     });
-
     if (remaining > 0) {
-      const extra = distributeRandomBalanced(remaining, weights);
-      extra.forEach((n, idx) => { perPerson[idx] += n; });
+      distributeRandomBalanced(remaining, weights).forEach((n, idx) => { perPerson[idx] += n; });
     }
 
     roster.forEach((p, idx) => {
       for (let n = 0; n < perPerson[idx]; n++) {
-        assignments[p.id].push({ id: uid("a"), category, note: "", done: false });
+        toAdd.push({
+          id: uid("m"), month, occasion, kind: occasionKind(occasion),
+          assigneeIds: [p.id], directive: "", location: "", date: "",
+          plannedCases: config.casesPerMission || 15, status: "draft",
+          createdAt: now, updatedAt: now, updatedBy: actorName || "Admin",
+        });
       }
     });
   });
 
-  return { catalog, assignments, totalMissions };
+  return { removeIds, toAdd, removedCount: removeIds.length, keptCount, totalMissions };
+}
+
+function applyGeneratedPlan(existingMissions, plan) {
+  const removeSet = new Set(plan.removeIds);
+  return existingMissions.filter((m) => !removeSet.has(m.id)).concat(plan.toAdd);
 }
 
 // ---------- Storage helpers ----------
@@ -423,12 +560,14 @@ async function migrateFromV4() {
 }
 
 async function loadData() {
-  const v5 = await loadV5();
-  if (v5) return v5;
-  const migrated = await migrateFromV4();
-  if (migrated) return migrated;
-  await writeAllV5(SEED);
-  return SEED;
+  const raw = (await loadV5()) || (await migrateFromV4()) || SEED;
+  const needsShapeUpgrade = raw.teams.some((t) => !t.missions);
+  const data = { ...raw, teams: raw.teams.map(migrateTeamShape) };
+  // Persist immediately so storage doesn't lag behind what's displayed
+  // until the next edit — matters both for a true rollback story and so
+  // persist()'s reference-diffing has an accurate on-disk baseline.
+  if (needsShapeUpgrade) await writeAllV5(data);
+  return data;
 }
 
 // Diffs `next` against `prev` (the last snapshot we actually persisted) by
@@ -555,6 +694,7 @@ export default function MissionPortal() {
   const [adminMode, setAdminMode] = useState(false);
   const [showIdentityPicker, setShowIdentityPicker] = useState(false);
   const [editingMonth, setEditingMonth] = useState(false);
+  const [generatePreview, setGeneratePreview] = useState(null);
   const [monthDraft, setMonthDraft] = useState("");
   const [tourActive, setTourActive] = useState(false);
   const [tourSteps, setTourSteps] = useState([]);
@@ -744,6 +884,9 @@ export default function MissionPortal() {
   }
 
   const activeTeam = data.teams.find((t) => t.id === activeTeamId) || data.teams[0];
+  const today = new Date().toISOString().slice(0, 10);
+  const isPastMissionsDue = !!(activeTeam.deadlines?.missionsDue && today > activeTeam.deadlines.missionsDue);
+  const isPastEditsDue = !!(activeTeam.deadlines?.editsDue && today > activeTeam.deadlines.editsDue);
 
   // Applies a patch (object, or updater function receiving the current team)
   // to whichever team is active, and commits the whole document.
@@ -769,24 +912,32 @@ export default function MissionPortal() {
     setShowIdentityPicker(false);
   }
 
+  function currentActorName() {
+    const me = activeTeam.roster.find((r) => r.id === myId);
+    return me ? me.name : "Admin";
+  }
+
   // ---- roster mutations (scoped to the active team) ----
   function addMember(name) {
     const id = uid("p");
     commitTeam((t) => ({
       roster: [...t.roster, { id, name }],
-      assignments: { ...t.assignments, [id]: [] },
       inventory: { ...t.inventory, [id]: emptyInventory() },
     }));
     return id;
   }
 
+  // A person's solo missions (no partner) are deleted with them, matching
+  // the "this permanently deletes their missions" warning shown before this
+  // runs; a mission they share with a partner just loses their slot.
   function removeMember(id) {
     const roster = activeTeam.roster.filter((r) => r.id !== id);
-    const assignments = { ...activeTeam.assignments };
     const inventory = { ...activeTeam.inventory };
-    delete assignments[id];
     delete inventory[id];
-    commitTeam({ roster, assignments, inventory });
+    const missions = activeTeam.missions
+      .filter((m) => !(m.assigneeIds.includes(id) && m.assigneeIds.length === 1))
+      .map((m) => (m.assigneeIds.includes(id) ? { ...m, assigneeIds: m.assigneeIds.filter((pid) => pid !== id) } : m));
+    commitTeam({ roster, inventory, missions });
     if (viewId === id) setViewId(roster[0] ? roster[0].id : null);
     if (myId === id) {
       setMyId(null);
@@ -794,47 +945,82 @@ export default function MissionPortal() {
     }
   }
 
-  // ---- catalog mutations (scoped to the active team) ----
-  function updateCatalog(id, field, value) {
-    commitTeam((t) => ({ catalog: t.catalog.map((c) => (c.id === id ? { ...c, [field]: value } : c)) }));
-  }
-
   function updatePlanningConfig(next) {
     commitTeam({ planningConfig: next });
+  }
+
+  // Adding an occasion extends the splits map; removing one is refused
+  // (surfaced in the UI) while any mission still references it, so a
+  // mission never ends up pointing at an occasion that no longer exists.
+  function addOccasion(name) {
+    commitTeam((t) => ({
+      occasions: [...t.occasions, name],
+      planningConfig: { ...t.planningConfig, splits: { ...t.planningConfig.splits, [name]: 0 } },
+    }));
+  }
+
+  function removeOccasion(name) {
+    commitTeam((t) => ({ occasions: t.occasions.filter((o) => o !== name) }));
   }
 
   function updatePriority(personId, priority) {
     commitTeam((t) => ({ roster: t.roster.map((p) => (p.id === personId ? { ...p, priority } : p)) }));
   }
 
-  function runGeneratePlan() {
-    const { catalog, assignments } = generateMissionPlan(activeTeam.planningConfig, activeTeam.roster);
-    commitTeam({ catalog, assignments });
+  // ---- plan generation (preview, then explicit confirm/cancel) ----
+  function previewGeneratePlan() {
+    setGeneratePreview(
+      planGeneration(activeTeam.planningConfig, activeTeam.roster, activeTeam.occasions, activeTeam.missions, activeTeam.month, currentActorName())
+    );
   }
 
-  function updateAssignmentNote(personId, aid, note) {
+  function confirmGeneratePlan() {
+    if (!generatePreview) return;
+    commitTeam((t) => ({ missions: applyGeneratedPlan(t.missions, generatePreview) }));
+    setGeneratePreview(null);
+  }
+
+  function cancelGeneratePlan() {
+    setGeneratePreview(null);
+  }
+
+  // ---- mission mutations (scoped to the active team) ----
+  function addMission(occasion, assigneeIds, directive) {
+    const now = new Date().toISOString();
     commitTeam((t) => ({
-      assignments: { ...t.assignments, [personId]: (t.assignments[personId] || []).map((a) => (a.id === aid ? { ...a, note } : a)) },
+      missions: [...t.missions, {
+        id: uid("m"), teamId: t.id, month: t.month, occasion, kind: occasionKind(occasion),
+        assigneeIds, directive: directive || "", location: "", date: "",
+        plannedCases: t.planningConfig.casesPerMission || 15,
+        status: (directive || "").trim() ? "edited" : "draft",
+        createdAt: now, updatedAt: now, updatedBy: currentActorName(),
+      }],
     }));
   }
 
-  // ---- assignment mutations (scoped to the active team) ----
-  function addAssignment(personId, category, note) {
+  // General-purpose field edit (directive/location/date/occasion/assigneeIds)
+  // — any edit promotes a still-untouched draft to "edited" so a later
+  // regenerate can never silently wipe it out.
+  function updateMission(missionId, patch) {
+    const now = new Date().toISOString();
     commitTeam((t) => ({
-      assignments: { ...t.assignments, [personId]: [...(t.assignments[personId] || []), { id: uid("a"), category, note, done: false }] },
+      missions: t.missions.map((m) => (m.id === missionId
+        ? { ...m, ...patch, status: m.status === "draft" ? "edited" : m.status, updatedAt: now, updatedBy: currentActorName() }
+        : m)),
     }));
   }
 
-  function toggleAssignment(personId, aid) {
+  function toggleMissionDone(missionId) {
+    const now = new Date().toISOString();
     commitTeam((t) => ({
-      assignments: { ...t.assignments, [personId]: (t.assignments[personId] || []).map((a) => (a.id === aid ? { ...a, done: !a.done } : a)) },
+      missions: t.missions.map((m) => (m.id === missionId
+        ? { ...m, status: m.status === "completed" ? "edited" : "completed", updatedAt: now, updatedBy: currentActorName() }
+        : m)),
     }));
   }
 
-  function removeAssignment(personId, aid) {
-    commitTeam((t) => ({
-      assignments: { ...t.assignments, [personId]: (t.assignments[personId] || []).filter((a) => a.id !== aid) },
-    }));
+  function removeMission(missionId) {
+    commitTeam((t) => ({ missions: t.missions.filter((m) => m.id !== missionId) }));
   }
 
   // ---- inventory mutations (scoped to the active team) ----
@@ -883,11 +1069,11 @@ export default function MissionPortal() {
   }
 
   function exportCsv() {
-    const rows = [["Name", "Category", "Note", "Done"]];
-    activeTeam.roster.forEach((p) => {
-      (activeTeam.assignments[p.id] || []).forEach((a) => {
-        rows.push([p.name, a.category, a.note, a.done ? "Yes" : "No"]);
-      });
+    const nameOf = (id) => activeTeam.roster.find((r) => r.id === id)?.name || "Unassigned";
+    const rows = [["Person", "Partner", "Occasion", "Directive", "Date", "Location", "Status"]];
+    activeTeam.missions.forEach((m) => {
+      const [primary, ...rest] = m.assigneeIds.length ? m.assigneeIds.map(nameOf) : ["Unassigned"];
+      rows.push([primary, rest.join(", "), m.occasion, m.directive, m.date, m.location, m.status]);
     });
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -999,8 +1185,8 @@ export default function MissionPortal() {
           <div className="rail-label">{activeTeam.name}</div>
           <nav>
             {activeTeam.roster.map((p) => {
-              const list = activeTeam.assignments[p.id] || [];
-              const done = list.filter((a) => a.done).length;
+              const list = activeTeam.missions.filter((m) => m.assigneeIds.includes(p.id));
+              const done = list.filter((m) => m.status === "completed").length;
               return (
                 <button
                   key={p.id}
@@ -1023,6 +1209,7 @@ export default function MissionPortal() {
               myId={myId}
               placedAssets={data.placedAssets || []}
               missionContacts={data.missionContacts || []}
+              isPastMissionsDue={isPastMissionsDue}
               onSelectPerson={(id) => { setViewId(id); setTab("missions"); }}
             />
           )}
@@ -1039,11 +1226,11 @@ export default function MissionPortal() {
               data={activeTeam}
               viewer={viewer}
               adminMode={adminMode}
-              canEditNotes={adminMode || isViewingSelf}
-              onAdd={addAssignment}
-              onToggle={toggleAssignment}
-              onRemove={removeAssignment}
-              onNoteChange={updateAssignmentNote}
+              canEditLocation={adminMode || (isViewingSelf && !isPastEditsDue)}
+              onAdd={addMission}
+              onToggle={toggleMissionDone}
+              onRemove={removeMission}
+              onUpdateMission={updateMission}
             />
           )}
 
@@ -1069,15 +1256,24 @@ export default function MissionPortal() {
             <TeamTab
               data={activeTeam}
               clothingStock={data.clothingStock || {}}
-              onUpdateCatalog={updateCatalog}
               onRemoveMember={removeMember}
               onExport={exportCsv}
               onUpdateMeta={(field, value) => commitTeam({ [field]: value })}
               onUpdatePlanningConfig={updatePlanningConfig}
               onUpdatePriority={updatePriority}
-              onGeneratePlan={runGeneratePlan}
+              onAddOccasion={addOccasion}
+              onRemoveOccasion={removeOccasion}
+              generatePreview={generatePreview}
+              onPreviewGenerate={previewGeneratePlan}
+              onConfirmGenerate={confirmGeneratePlan}
+              onCancelGenerate={cancelGeneratePlan}
               addMember={addMember}
               onUpdateClothingStock={updateClothingStock}
+              onAddMission={addMission}
+              onUpdateMission={updateMission}
+              onRemoveMission={removeMission}
+              onToggleMissionDone={toggleMissionDone}
+              isPastMissionsDue={isPastMissionsDue}
             />
           )}
         </main>
@@ -1210,12 +1406,14 @@ function AddMemberInline({ onAdd }) {
   );
 }
 
-function DashboardTab({ data, myId, placedAssets, missionContacts, onSelectPerson }) {
+function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson }) {
   const roster = data.roster;
-  const totalAssigned = roster.reduce((s, p) => s + (data.assignments[p.id] || []).length, 0);
-  const totalDone = roster.reduce((s, p) => s + (data.assignments[p.id] || []).filter((a) => a.done).length, 0);
+  const totalAssigned = data.missions.length;
+  const totalDone = data.missions.filter((m) => m.status === "completed").length;
   const stillPlaced = placedAssets.filter((a) => a.status === "placed").length;
   const contacts = missionContacts;
+  const overdue = data.missions.filter((m) => !m.location.trim() && !m.date.trim());
+  const quotaSummary = computeQuotaSummary(data).filter((q) => q.planned > 0);
 
   return (
     <div className="tab-content">
@@ -1227,13 +1425,19 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, onSelectPerso
           </Badge>
         </div>
         <p className="muted">{data.windowNote}</p>
+        {isPastMissionsDue && overdue.length > 0 && (
+          <p className="muted empty-hint overdue-hint">
+            <AlertCircle size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />
+            Past the missions-due date — {overdue.length} mission{overdue.length > 1 ? "s" : ""} still {overdue.length > 1 ? "have" : "has"} no location or date set.
+          </p>
+        )}
       </section>
 
       <section className="quota-strip">
-        {data.catalog.filter((c) => c.available > 0).map((c) => (
-          <div key={c.id} className="quota-chip">
-            <span className="quota-cat">{c.category}</span>
-            <span className="quota-num">{c.remaining}<span className="quota-of">/{c.available}</span></span>
+        {quotaSummary.map((q) => (
+          <div key={q.occasion} className="quota-chip">
+            <span className="quota-cat">{q.occasion}</span>
+            <span className="quota-num">{q.remaining}<span className="quota-of">/{q.planned}</span></span>
           </div>
         ))}
       </section>
@@ -1242,8 +1446,8 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, onSelectPerso
         <div className="card-head"><h2><Users size={16} /> Team progress</h2></div>
         <ul className="dashboard-progress-list">
           {roster.map((p) => {
-            const list = data.assignments[p.id] || [];
-            const done = list.filter((a) => a.done).length;
+            const list = data.missions.filter((m) => m.assigneeIds.includes(p.id));
+            const done = list.filter((m) => m.status === "completed").length;
             const pct = list.length ? Math.round((done / list.length) * 100) : 0;
             return (
               <li key={p.id}>
@@ -1293,19 +1497,21 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, onSelectPerso
   );
 }
 
-function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, onRemove, onNoteChange }) {
-  const list = data.assignments[viewer.id] || [];
-  const [newCat, setNewCat] = useState(CATEGORY_ORDER[0]);
-  const [newNote, setNewNote] = useState("");
-  const missingLocations = list.filter((a) => a.category !== "University Seeding" && !a.note.trim()).length;
+function MissionsTab({ data, viewer, adminMode, canEditLocation, onAdd, onToggle, onRemove, onUpdateMission }) {
+  const list = data.missions.filter((m) => m.assigneeIds.includes(viewer.id));
+  const [newOccasion, setNewOccasion] = useState(data.occasions[0]);
+  const [newDirective, setNewDirective] = useState("");
+  const missingLocations = list.filter((m) => m.kind !== "seeding" && !m.location.trim()).length;
+  const nameOf = (id) => data.roster.find((r) => r.id === id)?.name;
+  const quotaSummary = computeQuotaSummary(data).filter((q) => q.planned > 0);
 
   return (
     <div className="tab-content">
       <section className="quota-strip">
-        {data.catalog.filter((c) => c.available > 0).map((c) => (
-          <div key={c.id} className="quota-chip">
-            <span className="quota-cat">{c.category}</span>
-            <span className="quota-num">{c.remaining}<span className="quota-of">/{c.available}</span></span>
+        {quotaSummary.map((q) => (
+          <div key={q.occasion} className="quota-chip">
+            <span className="quota-cat">{q.occasion}</span>
+            <span className="quota-num">{q.remaining}<span className="quota-of">/{q.planned}</span></span>
           </div>
         ))}
       </section>
@@ -1313,13 +1519,13 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
       <section className="card" id="tour-missions-card">
         <div className="card-head">
           <h2>{viewer.name}'s missions</h2>
-          <Badge tone={list.every((a) => a.done) && list.length ? "good" : "default"}>
-            {list.filter((a) => a.done).length} of {list.length} complete
+          <Badge tone={list.every((m) => m.status === "completed") && list.length ? "good" : "default"}>
+            {list.filter((m) => m.status === "completed").length} of {list.length} complete
           </Badge>
         </div>
 
         {list.length === 0 && <p className="muted empty-hint">No missions assigned yet.</p>}
-        {missingLocations > 0 && canEditNotes && (
+        {missingLocations > 0 && canEditLocation && (
           <p className="muted empty-hint">
             <AlertCircle size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />
             {missingLocations} mission{missingLocations > 1 ? "s" : ""} still need a location — tap to add one.
@@ -1327,64 +1533,66 @@ function MissionsTab({ data, viewer, adminMode, canEditNotes, onAdd, onToggle, o
         )}
 
         <ul className="mission-list">
-          {list.map((a) => (
-            <li key={a.id} className={`mission-row ${a.done ? "mission-done" : ""}`}>
-              <button className="mission-check" onClick={() => onToggle(viewer.id, a.id)}>
-                {a.done ? <CheckCircle2 size={19} /> : <Circle size={19} />}
-              </button>
-              <div className="mission-text">
-                <span className="mission-cat">{a.category}</span>
-                {canEditNotes ? (
-                  a.category === "University Seeding" ? (
+          {list.map((m) => {
+            const partnerId = m.assigneeIds.find((id) => id !== viewer.id);
+            const done = m.status === "completed";
+            return (
+              <li key={m.id} className={`mission-row ${done ? "mission-done" : ""}`}>
+                <button className="mission-check" onClick={() => onToggle(m.id)}>
+                  {done ? <CheckCircle2 size={19} /> : <Circle size={19} />}
+                </button>
+                <div className="mission-text">
+                  <span className="mission-cat">{m.occasion}</span>
+                  {m.directive && <span className="mission-directive">{m.directive}</span>}
+                  {canEditLocation ? (
                     <input
                       className="mission-note-input"
-                      type="number" min="0"
-                      value={a.note}
-                      placeholder="Cans placed"
-                      onChange={(e) => onNoteChange(viewer.id, a.id, e.target.value)}
+                      type={m.kind === "seeding" ? "number" : "text"}
+                      min={m.kind === "seeding" ? "0" : undefined}
+                      value={m.location}
+                      placeholder={m.kind === "seeding" ? "Cans placed" : "Add a location…"}
+                      onChange={(e) => onUpdateMission(m.id, { location: e.target.value })}
                     />
                   ) : (
-                    <input
-                      className="mission-note-input"
-                      value={a.note}
-                      placeholder="Add a location or detail…"
-                      onChange={(e) => onNoteChange(viewer.id, a.id, e.target.value)}
-                    />
-                  )
-                ) : (
-                  <span className="mission-note">
-                    {a.category === "University Seeding"
-                      ? (a.note ? `${a.note} cans placed` : "No cans logged yet")
-                      : (a.note || "Location TBD")}
-                  </span>
+                    <span className="mission-note">
+                      {m.kind === "seeding"
+                        ? (m.location ? `${m.location} cans placed` : "No cans logged yet")
+                        : (m.location || "Location TBD")}
+                    </span>
+                  )}
+                  {(m.date || partnerId) && (
+                    <span className="mission-secondary">
+                      {m.date}{m.date && partnerId && " · "}{partnerId && `with ${nameOf(partnerId)}`}
+                    </span>
+                  )}
+                </div>
+                {adminMode && (
+                  <IconBtn danger title="Remove mission" onClick={() => onRemove(m.id)}>
+                    <Trash2 size={15} />
+                  </IconBtn>
                 )}
-              </div>
-              {adminMode && (
-                <IconBtn danger title="Remove mission" onClick={() => onRemove(viewer.id, a.id)}>
-                  <Trash2 size={15} />
-                </IconBtn>
-              )}
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
 
         {adminMode && (
           <div className="add-row">
-            <select className="text-input select-input" value={newCat} onChange={(e) => setNewCat(e.target.value)}>
-              {CATEGORY_ORDER.map((c) => <option key={c} value={c}>{c}</option>)}
+            <select className="text-input select-input" value={newOccasion} onChange={(e) => setNewOccasion(e.target.value)}>
+              {data.occasions.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <input
               className="text-input"
-              placeholder="Mission detail (location, notes)"
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
+              placeholder="Directive (event, note from the BMS)"
+              value={newDirective}
+              onChange={(e) => setNewDirective(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && newNote.trim()) { onAdd(viewer.id, newCat, newNote.trim()); setNewNote(""); }
+                if (e.key === "Enter") { onAdd(newOccasion, [viewer.id], newDirective.trim()); setNewDirective(""); }
               }}
             />
             <button
               className="btn btn-primary btn-sm"
-              onClick={() => { if (newNote.trim()) { onAdd(viewer.id, newCat, newNote.trim()); setNewNote(""); } }}
+              onClick={() => { onAdd(newOccasion, [viewer.id], newDirective.trim()); setNewDirective(""); }}
             >
               <Plus size={14} /> Assign
             </button>
@@ -1590,10 +1798,16 @@ function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem, 
   );
 }
 
-function TeamTab({ data, clothingStock, onUpdateCatalog, onRemoveMember, onExport, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority, onGeneratePlan, addMember, onUpdateClothingStock }) {
+function TeamTab({
+  data, clothingStock, onRemoveMember, onExport, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority,
+  onAddOccasion, onRemoveOccasion, generatePreview, onPreviewGenerate, onConfirmGenerate, onCancelGenerate,
+  addMember, onUpdateClothingStock, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
+}) {
   const [editingMeta, setEditingMeta] = useState(false);
   const [monthLabel, setMonthLabel] = useState(data.monthLabel);
   const [windowNote, setWindowNote] = useState(data.windowNote);
+  const [missionsDue, setMissionsDue] = useState(data.deadlines?.missionsDue || "");
+  const [editsDue, setEditsDue] = useState(data.deadlines?.editsDue || "");
   const [newName, setNewName] = useState("");
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeConfirmText, setRemoveConfirmText] = useState("");
@@ -1604,7 +1818,15 @@ function TeamTab({ data, clothingStock, onUpdateCatalog, onRemoveMember, onExpor
         <div className="card-head">
           <h2>Planning header</h2>
           {editingMeta ? (
-            <IconBtn title="Save" onClick={() => { onUpdateMeta("monthLabel", monthLabel); onUpdateMeta("windowNote", windowNote); setEditingMeta(false); }}>
+            <IconBtn
+              title="Save"
+              onClick={() => {
+                onUpdateMeta("monthLabel", monthLabel);
+                onUpdateMeta("windowNote", windowNote);
+                onUpdateMeta("deadlines", { missionsDue: missionsDue || null, editsDue: editsDue || null });
+                setEditingMeta(false);
+              }}
+            >
               <Save size={15} />
             </IconBtn>
           ) : (
@@ -1615,51 +1837,70 @@ function TeamTab({ data, clothingStock, onUpdateCatalog, onRemoveMember, onExpor
           <div className="meta-edit">
             <input className="text-input" value={monthLabel} onChange={(e) => setMonthLabel(e.target.value)} placeholder="Month label" />
             <input className="text-input" value={windowNote} onChange={(e) => setWindowNote(e.target.value)} placeholder="Deadline note" />
+            <label className="gen-field">
+              <span>Missions due</span>
+              <input className="text-input" type="date" value={missionsDue} onChange={(e) => setMissionsDue(e.target.value)} />
+            </label>
+            <label className="gen-field">
+              <span>Edits due</span>
+              <input className="text-input" type="date" value={editsDue} onChange={(e) => setEditsDue(e.target.value)} />
+            </label>
           </div>
         ) : (
-          <p className="muted">{data.windowNote}</p>
+          <>
+            <p className="muted">{data.windowNote}</p>
+            {isPastMissionsDue && <p className="muted"><AlertCircle size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />Past the missions-due date ({data.deadlines.missionsDue}).</p>}
+          </>
         )}
       </section>
+
+      <OccasionsEditor occasions={data.occasions} missions={data.missions} onAdd={onAddOccasion} onRemove={onRemoveOccasion} />
 
       <PlanGenerator
         config={data.planningConfig}
         roster={data.roster}
+        occasions={data.occasions}
         onUpdateConfig={onUpdatePlanningConfig}
-        onUpdatePriority={onUpdatePriority}
-        onGenerate={onGeneratePlan}
+        onGenerate={onPreviewGenerate}
       />
+
+      {generatePreview && (
+        <Modal onClose={onCancelGenerate} title="Generate plan">
+          <p className="muted">
+            This will replace {generatePreview.removedCount} untouched draft{generatePreview.removedCount === 1 ? "" : "s"} with{" "}
+            {generatePreview.toAdd.length} freshly generated one{generatePreview.toAdd.length === 1 ? "" : "s"}.
+            {generatePreview.keptCount > 0 && ` ${generatePreview.keptCount} mission${generatePreview.keptCount === 1 ? "" : "s"} you've already touched will be kept exactly as-is.`}
+          </p>
+          <button className="btn btn-primary" onClick={onConfirmGenerate}>Apply</button>
+          <button className="btn btn-ghost" onClick={onCancelGenerate}>Cancel</button>
+        </Modal>
+      )}
 
       <section className="card" id="tour-quotas-card">
         <div className="card-head">
           <h2>Mission quotas</h2>
           <button className="btn btn-ghost btn-sm" onClick={onExport}><Download size={14} /> Export CSV</button>
         </div>
-        <p className="muted empty-hint">These update automatically when you generate a plan above — or fine-tune them by hand here.</p>
-        <div className="quota-table">
+        <p className="muted empty-hint">Read-only — computed live from the missions below (and the split percentages above).</p>
+        <div className="quota-table quota-table-4col">
           <div className="quota-table-head">
-            <span>Category</span><span>Available</span><span>Remaining</span>
+            <span>Occasion</span><span>Planned</span><span>Assigned</span><span>Remaining</span>
           </div>
-          {data.catalog.map((c) => (
-            <div className="quota-table-row" key={c.id}>
-              <span>{c.category}</span>
-              <input
-                className="text-input text-input-num"
-                type="number"
-                min="0"
-                value={c.available}
-                onChange={(e) => onUpdateCatalog(c.id, "available", Math.max(0, parseInt(e.target.value || "0", 10)))}
-              />
-              <input
-                className="text-input text-input-num"
-                type="number"
-                min="0"
-                value={c.remaining}
-                onChange={(e) => onUpdateCatalog(c.id, "remaining", Math.max(0, parseInt(e.target.value || "0", 10)))}
-              />
+          {computeQuotaSummary(data).map((q) => (
+            <div className="quota-table-row quota-table-row-readonly" key={q.occasion}>
+              <span>{q.occasion}</span><span>{q.planned}</span><span>{q.assigned}</span><span>{q.remaining}</span>
             </div>
           ))}
         </div>
       </section>
+
+      <MissionsPlanTable
+        team={data}
+        onUpdateMission={onUpdateMission}
+        onRemoveMission={onRemoveMission}
+        onAddMission={onAddMission}
+        onToggleMissionDone={onToggleMissionDone}
+      />
 
       <section className="card" id="tour-clothing-stock">
         <div className="card-head"><h2>Clothing stock</h2></div>
@@ -1751,12 +1992,12 @@ function TeamTab({ data, clothingStock, onUpdateCatalog, onRemoveMember, onExpor
   );
 }
 
-function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGenerate }) {
+function PlanGenerator({ config, roster, occasions, onUpdateConfig, onGenerate }) {
   const [local, setLocal] = useState(config);
   const [pinPerson, setPinPerson] = useState(roster[0]?.id || "");
-  const [pinCategory, setPinCategory] = useState(CATEGORY_ORDER[0]);
+  const [pinOccasion, setPinOccasion] = useState(occasions[0]);
   const [pinCount, setPinCount] = useState(1);
-  const totalPct = CATEGORY_ORDER.reduce((s, c) => s + (Number(local.splits[c]) || 0), 0);
+  const totalPct = occasions.reduce((s, c) => s + (Number(local.splits[c]) || 0), 0);
   const totalMissions = Math.max(0, Math.round((local.totalCases || 0) / (local.casesPerMission || 1)));
 
   function setField(field, value) {
@@ -1770,22 +2011,22 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
     setLocal(next);
     onUpdateConfig(next);
   }
-  function setSplit(category, value) {
-    const next = { ...local, splits: { ...local.splits, [category]: Number(value) } };
+  function setSplit(occasion, value) {
+    const next = { ...local, splits: { ...local.splits, [occasion]: Number(value) } };
     setLocal(next);
     onUpdateConfig(next);
   }
   function normalize() {
     if (totalPct === 0) return;
     const scaled = {};
-    CATEGORY_ORDER.forEach((c) => { scaled[c] = Math.round(((local.splits[c] || 0) / totalPct) * 100); });
+    occasions.forEach((c) => { scaled[c] = Math.round(((local.splits[c] || 0) / totalPct) * 100); });
     const next = { ...local, splits: scaled };
     setLocal(next);
     onUpdateConfig(next);
   }
   function addPin() {
     if (!pinPerson) return;
-    const next = { ...local, pins: [...(local.pins || []), { id: uid("pin"), personId: pinPerson, category: pinCategory, count: Math.max(1, pinCount) }] };
+    const next = { ...local, pins: [...(local.pins || []), { id: uid("pin"), personId: pinPerson, occasion: pinOccasion, count: Math.max(1, pinCount) }] };
     setLocal(next);
     onUpdateConfig(next);
   }
@@ -1802,9 +2043,10 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
         <Badge tone="good">{totalMissions} missions from {local.totalCases || 0} cases</Badge>
       </div>
       <p className="muted empty-hint">
-        Enter what corporate gave you to distribute, and the split each pillar should get. This replaces the current
-        quotas and creates fresh (location-TBD) mission slots — favorites picked below get guaranteed first, the
-        rest are split randomly by priority so no one's stuck with none (or all) of one category.
+        Enter what corporate gave you to distribute, and the split each pillar should get. Generating creates draft
+        (location-TBD) missions to fill the gap between the target and what you've already touched — anything you've
+        edited, assigned a location to, or completed is always kept, never overwritten. Favorites picked below get
+        guaranteed first; the rest are split randomly by priority.
       </p>
 
       <div className="gen-inputs">
@@ -1847,7 +2089,7 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
         </span>
       </div>
       <div className="split-grid">
-        {CATEGORY_ORDER.map((c) => (
+        {occasions.map((c) => (
           <label className="split-row" key={c}>
             <span>{c}</span>
             <div className="split-input-wrap">
@@ -1867,14 +2109,14 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
         <div className="split-head" style={{ marginTop: 16 }}>
           <span>Favorites (optional)</span>
         </div>
-        <p className="muted empty-hint">Guarantee specific people get specific categories before the rest are split randomly.</p>
+        <p className="muted empty-hint">Guarantee specific people get specific occasions before the rest are split randomly.</p>
         {(local.pins || []).length > 0 && (
           <ul className="roster-manage-list">
             {(local.pins || []).map((pin) => {
               const person = roster.find((p) => p.id === pin.personId);
               return (
                 <li key={pin.id} className="roster-manage-row">
-                  <span>{person ? person.name : "Unknown"} — {pin.count}× {pin.category}</span>
+                  <span>{person ? person.name : "Unknown"} — {pin.count}× {pin.occasion}</span>
                   <IconBtn danger title="Remove favorite" onClick={() => removePin(pin.id)}><Trash2 size={14} /></IconBtn>
                 </li>
               );
@@ -1885,8 +2127,8 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
           <select className="text-input select-input select-input-sm" value={pinPerson} onChange={(e) => setPinPerson(e.target.value)}>
             {roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <select className="text-input select-input select-input-sm" value={pinCategory} onChange={(e) => setPinCategory(e.target.value)}>
-            {CATEGORY_ORDER.map((c) => <option key={c} value={c}>{c}</option>)}
+          <select className="text-input select-input select-input-sm" value={pinOccasion} onChange={(e) => setPinOccasion(e.target.value)}>
+            {occasions.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <input
             className="text-input text-input-num"
@@ -1898,17 +2140,181 @@ function PlanGenerator({ config, roster, onUpdateConfig, onUpdatePriority, onGen
         </div>
       </div>
 
-      <button
-        className="btn btn-primary"
-        style={{ marginTop: 14 }}
-        onClick={() => {
-          if (confirm("This replaces current mission quotas and every assigned mission (locations included). Continue?")) {
-            onGenerate();
-          }
-        }}
-      >
-        Generate &amp; distribute missions
+      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={onGenerate}>
+        Preview generated plan
       </button>
+    </section>
+  );
+}
+
+function OccasionsEditor({ occasions, missions, onAdd, onRemove }) {
+  const [newName, setNewName] = useState("");
+  function submit() {
+    const name = newName.trim();
+    if (name && !occasions.includes(name)) { onAdd(name); setNewName(""); }
+  }
+  return (
+    <section className="card" id="tour-occasions-card">
+      <div className="card-head"><h2>Occasions</h2><Badge>{occasions.length}</Badge></div>
+      <p className="muted empty-hint">The pillars this team plans against — splits and every occasion picker below pull from this list.</p>
+      <ul className="roster-manage-list">
+        {occasions.map((o) => {
+          const inUse = missions.some((m) => m.occasion === o);
+          return (
+            <li key={o} className="roster-manage-row">
+              <span>{o}</span>
+              <IconBtn
+                danger
+                title={inUse ? "Can't remove — missions still use this occasion" : "Remove occasion"}
+                onClick={() => !inUse && onRemove(o)}
+              >
+                <Trash2 size={14} style={inUse ? { opacity: 0.35 } : undefined} />
+              </IconBtn>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="add-row" style={{ marginTop: 12 }}>
+        <input
+          className="text-input"
+          placeholder="New occasion name"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+        <button className="btn btn-primary btn-sm" onClick={submit}><Plus size={14} /> Add</button>
+      </div>
+    </section>
+  );
+}
+
+// The admin-facing dense, filterable, inline-editable table of every real
+// mission — this is the spreadsheet's per-SM × occasion matrix, made
+// editable, and the primary way an admin hand-tunes a generated draft.
+function MissionsPlanTable({ team, onUpdateMission, onRemoveMission, onAddMission, onToggleMissionDone }) {
+  const [occasionFilter, setOccasionFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [newPerson, setNewPerson] = useState(team.roster[0]?.id || "");
+  const [newOccasion, setNewOccasion] = useState(team.occasions[0]);
+  const [newDirective, setNewDirective] = useState("");
+
+  const nameOf = (id) => team.roster.find((r) => r.id === id)?.name || "";
+
+  const rows = team.missions
+    .filter((m) => occasionFilter === "all" || m.occasion === occasionFilter)
+    .filter((m) => statusFilter === "all" || m.status === statusFilter)
+    .filter((m) => !unassignedOnly || m.assigneeIds.length === 0)
+    .slice()
+    .sort((a, b) => (nameOf(a.assigneeIds[0]) || "￿").localeCompare(nameOf(b.assigneeIds[0]) || "￿") || a.occasion.localeCompare(b.occasion));
+
+  return (
+    <section className="card" id="tour-plan-table-card">
+      <div className="card-head"><h2>Missions</h2><Badge>{team.missions.length}</Badge></div>
+
+      <div className="plan-filters">
+        <select className="text-input select-input select-input-sm" value={occasionFilter} onChange={(e) => setOccasionFilter(e.target.value)}>
+          <option value="all">All occasions</option>
+          {team.occasions.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <select className="text-input select-input select-input-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="all">All statuses</option>
+          <option value="draft">Draft</option>
+          <option value="edited">Edited</option>
+          <option value="completed">Completed</option>
+        </select>
+        <label className="plan-filter-toggle">
+          <input type="checkbox" checked={unassignedOnly} onChange={(e) => setUnassignedOnly(e.target.checked)} />
+          Unassigned only
+        </label>
+      </div>
+
+      {rows.length === 0 && <p className="muted empty-hint">No missions match these filters.</p>}
+
+      {rows.length > 0 && (
+        <div className="plan-table">
+          <div className="plan-table-head">
+            <span>Person</span><span>Occasion</span><span>Directive</span><span>Partner</span><span>Date</span><span>Location</span><span>Done</span><span />
+          </div>
+          {rows.map((m) => {
+            const primary = m.assigneeIds[0] || "";
+            const partnerId = m.assigneeIds[1] || "";
+            return (
+              <div className={`plan-table-row ${m.status === "draft" ? "plan-row-draft" : ""}`} key={m.id}>
+                <select
+                  className="text-input select-input select-input-sm"
+                  value={primary}
+                  onChange={(e) => onUpdateMission(m.id, { assigneeIds: [e.target.value, partnerId].filter(Boolean) })}
+                >
+                  <option value="">— Unassigned —</option>
+                  {team.roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <select
+                  className="text-input select-input select-input-sm"
+                  value={m.occasion}
+                  onChange={(e) => onUpdateMission(m.id, { occasion: e.target.value, kind: occasionKind(e.target.value) })}
+                >
+                  {team.occasions.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <input
+                  className="text-input"
+                  value={m.directive}
+                  placeholder="Directive"
+                  onChange={(e) => onUpdateMission(m.id, { directive: e.target.value })}
+                />
+                <select
+                  className="text-input select-input select-input-sm"
+                  value={partnerId}
+                  onChange={(e) => onUpdateMission(m.id, { assigneeIds: [primary, e.target.value].filter(Boolean) })}
+                >
+                  <option value="">No partner</option>
+                  {team.roster.filter((p) => p.id !== primary).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <input className="text-input" type="date" value={m.date} onChange={(e) => onUpdateMission(m.id, { date: e.target.value })} />
+                <input
+                  className="text-input"
+                  value={m.location}
+                  placeholder="Location"
+                  onChange={(e) => onUpdateMission(m.id, { location: e.target.value })}
+                />
+                <button
+                  className="mission-check"
+                  title={m.status === "completed" ? "Mark not done" : "Mark done"}
+                  onClick={() => onToggleMissionDone(m.id)}
+                >
+                  {m.status === "completed" ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                </button>
+                <IconBtn danger title="Delete mission" onClick={() => onRemoveMission(m.id)}><Trash2 size={14} /></IconBtn>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="add-row" style={{ marginTop: 12 }}>
+        <select className="text-input select-input select-input-sm" value={newPerson} onChange={(e) => setNewPerson(e.target.value)}>
+          <option value="">— Unassigned —</option>
+          {team.roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select className="text-input select-input select-input-sm" value={newOccasion} onChange={(e) => setNewOccasion(e.target.value)}>
+          {team.occasions.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <input
+          className="text-input"
+          placeholder="Directive (optional)"
+          value={newDirective}
+          onChange={(e) => setNewDirective(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { onAddMission(newOccasion, newPerson ? [newPerson] : [], newDirective.trim()); setNewDirective(""); }
+          }}
+        />
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => { onAddMission(newOccasion, newPerson ? [newPerson] : [], newDirective.trim()); setNewDirective(""); }}
+        >
+          <Plus size={14} /> Add mission
+        </button>
+      </div>
     </section>
   );
 }
@@ -2226,6 +2632,24 @@ function PortalStyles() {
       }
       .quota-table-head { font-size: 11px; color: var(--ink-soft); padding: 0 2px 4px; }
       .quota-table-row { padding: 5px 2px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+      .quota-table-4col .quota-table-head, .quota-table-4col .quota-table-row { grid-template-columns: 1fr 64px 64px 64px; }
+      .quota-table-row-readonly { color: var(--ink-soft); }
+      .quota-table-row-readonly span:first-child { color: var(--ink); }
+
+      .plan-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+      .plan-filter-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft); }
+      .plan-table { display: flex; flex-direction: column; gap: 4px; overflow-x: auto; }
+      .plan-table-head, .plan-table-row {
+        display: grid;
+        grid-template-columns: 130px 130px 1fr 130px 130px 1fr 32px 32px;
+        gap: 8px; align-items: center; min-width: 900px;
+      }
+      .plan-table-head { font-size: 11px; color: var(--ink-soft); padding: 0 2px 4px; }
+      .plan-table-row { padding: 5px 2px; border-bottom: 1px solid var(--line); }
+      .plan-row-draft { opacity: 0.55; }
+      .mission-directive { font-size: 12px; color: var(--ink-soft); font-style: italic; }
+      .mission-secondary { font-size: 11.5px; color: var(--ink-soft); }
+      .overdue-hint { color: var(--danger); }
 
       .roster-manage-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
       .roster-manage-row {
@@ -2370,6 +2794,7 @@ function PortalStyles() {
         .rail-add, .rail-add-form { display: none; }
         .main-panel { padding: 16px; }
         .quota-table-head, .quota-table-row { grid-template-columns: 1fr 60px 60px; gap: 6px; }
+        .quota-table-4col .quota-table-head, .quota-table-4col .quota-table-row { grid-template-columns: 1fr 48px 48px 48px; }
       }
     `}</style>
   );
