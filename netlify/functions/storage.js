@@ -23,8 +23,29 @@ function namespacedKey(key) {
   return `shared:${key}`;
 }
 
+// Only "shared" data ever reaches this function (see src/storage.js) — the
+// mission plan, roster, gear log, etc. There are exactly two intended users
+// (the planner and their BMS manager), so every call, reads included, is
+// gated behind one shared-team passcode set via the ADMIN_PASSCODE env var.
+// If that var isn't set, refuse everything rather than silently going open.
+function checkAuth(event) {
+  const configured = process.env.ADMIN_PASSCODE;
+  if (!configured) {
+    return { ok: false, statusCode: 500, body: JSON.stringify({ error: "Server misconfigured: ADMIN_PASSCODE is not set" }) };
+  }
+  const headers = event.headers || {};
+  const supplied = headers["x-passcode"] || headers["X-Passcode"];
+  if (supplied !== configured) {
+    return { ok: false, statusCode: 401, body: JSON.stringify({ error: "unauthorized" }) };
+  }
+  return { ok: true };
+}
+
 export async function handler(event) {
   connectLambda(event);
+
+  const auth = checkAuth(event);
+  if (!auth.ok) return { statusCode: auth.statusCode, body: auth.body };
 
   const params = event.queryStringParameters || {};
 

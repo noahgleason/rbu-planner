@@ -15,8 +15,38 @@
 //    state on storage errors) — fine for quick UI iteration, but use
 //    `netlify dev` to actually exercise sync locally.
 
-function hasHostStorage() {
+export function hasHostStorage() {
   return typeof window !== "undefined" && window.storage && typeof window.storage.get === "function";
+}
+
+// The one shared-team passcode, gating every call the Netlify Function
+// tier makes (see netlify/functions/storage.js). Kept in this device's
+// localStorage — never sent anywhere except as the x-passcode header on
+// this function's own requests.
+const PASSCODE_KEY = "mission-portal:site-passcode";
+
+export function getStoredPasscode() {
+  try {
+    return window.localStorage.getItem(PASSCODE_KEY) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+export function setStoredPasscode(pass) {
+  try {
+    window.localStorage.setItem(PASSCODE_KEY, pass);
+  } catch (e) {}
+}
+
+export function clearStoredPasscode() {
+  try {
+    window.localStorage.removeItem(PASSCODE_KEY);
+  } catch (e) {}
+}
+
+function authHeaders(extra) {
+  return { ...extra, "x-passcode": getStoredPasscode() };
 }
 
 function localKey(key, shared) {
@@ -50,9 +80,21 @@ const localStorageAdapter = {
 
 const FUNCTION_URL = "/.netlify/functions/storage";
 
+// Throws an Error with `.status` set so callers (the passcode-gate flow
+// above all) can distinguish "wrong/missing passcode" from any other
+// failure (network down, function not deployed, etc.).
+function httpError(message, status) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
 const netlifyAdapter = {
   async get(key, shared = false) {
-    const res = await fetch(`${FUNCTION_URL}?key=${encodeURIComponent(key)}&shared=${shared}`);
+    const res = await fetch(`${FUNCTION_URL}?key=${encodeURIComponent(key)}&shared=${shared}`, {
+      headers: authHeaders(),
+    });
+    if (res.status === 401) throw httpError("unauthorized", 401);
     if (res.status === 404) throw new Error("not found");
     if (!res.ok) throw new Error(`storage get failed (${res.status})`);
     const data = await res.json();
@@ -61,19 +103,27 @@ const netlifyAdapter = {
   async set(key, value, shared = false) {
     const res = await fetch(FUNCTION_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ key, value, shared }),
     });
+    if (res.status === 401) throw httpError("unauthorized", 401);
     if (!res.ok) throw new Error(`storage set failed (${res.status})`);
     return { key, value, shared };
   },
   async delete(key, shared = false) {
-    const res = await fetch(`${FUNCTION_URL}?key=${encodeURIComponent(key)}&shared=${shared}`, { method: "DELETE" });
+    const res = await fetch(`${FUNCTION_URL}?key=${encodeURIComponent(key)}&shared=${shared}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (res.status === 401) throw httpError("unauthorized", 401);
     if (!res.ok) throw new Error(`storage delete failed (${res.status})`);
     return { key, deleted: true, shared };
   },
   async list(prefix = "", shared = false) {
-    const res = await fetch(`${FUNCTION_URL}?list=true&prefix=${encodeURIComponent(prefix)}&shared=${shared}`);
+    const res = await fetch(`${FUNCTION_URL}?list=true&prefix=${encodeURIComponent(prefix)}&shared=${shared}`, {
+      headers: authHeaders(),
+    });
+    if (res.status === 401) throw httpError("unauthorized", 401);
     if (!res.ok) throw new Error(`storage list failed (${res.status})`);
     const data = await res.json();
     return { keys: data.keys, prefix, shared };

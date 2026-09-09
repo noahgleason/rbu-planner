@@ -5,7 +5,9 @@ import {
   ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
   LayoutDashboard,
 } from "lucide-react";
-import storage from "./storage.js";
+import storage, {
+  hasHostStorage, getStoredPasscode, setStoredPasscode, clearStoredPasscode,
+} from "./storage.js";
 
 // ---------- Demo seed data ----------
 // NOTE: this currently seeds real teammate names/quotas from the internal
@@ -32,7 +34,6 @@ function emptyCatalog() {
 }
 
 const SEED = {
-  adminPasscode: "changeme",
   // Which team's roster/quotas/missions are showing — team-specific data
   // lives under `teams`; gear, contacts, and clothing stock are shared
   // across every team, since they track physical assets, not a roster.
@@ -150,7 +151,6 @@ const SEED = {
   clothingStock: { S: 4, M: 10, L: 8, XL: 3 },
 };
 
-const STORAGE_KEY = "redbull-mission-portal-v4";
 const PRIORITY_LABELS = { 1: "Low", 2: "Standard", 3: "High" };
 const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
 const CLOTHING_SIZES = ["S", "M", "L", "XL"];
@@ -359,20 +359,104 @@ function generateMissionPlan(config, roster) {
 }
 
 // ---------- Storage helpers ----------
-async function loadData() {
+// v5 storage layout: one Netlify Blobs key per team (so editing Lansing's
+// plan can't collide with a write to GR's, and vice versa), plus one key
+// each for the cross-team gear log/contacts/clothing stock, plus an index
+// key listing which team keys exist. This replaces v4's single
+// "redbull-mission-portal-v4" blob, which put every team's data and every
+// edit (a single checkbox included) behind one shared write.
+//
+// The legacy v4 key is READ (for a one-time migration) but never written or
+// deleted — it stays as a rollback if v5 needs to be abandoned.
+const LEGACY_V4_KEY = "redbull-mission-portal-v4";
+const TEAMS_INDEX_KEY = "v5:teams-index";
+const teamKey = (id) => `v5:team:${id}`;
+const COMMON_ASSETS_KEY = "v5:common:assets";
+const COMMON_CONTACTS_KEY = "v5:common:contacts";
+const COMMON_CLOTHING_KEY = "v5:common:clothing";
+
+async function getJSON(key, fallback) {
   try {
-    const res = await storage.get(STORAGE_KEY, true);
+    const res = await storage.get(key, true);
     if (res && res.value) return JSON.parse(res.value);
   } catch (e) {
-    // not found or error -> fall through to seed
+    // not found or unreachable -> caller's fallback
   }
-  await storage.set(STORAGE_KEY, JSON.stringify(SEED), true);
+  return fallback;
+}
+
+// Writes every key that makes up `data` — used for the initial seed/migration
+// write, where everything is new. Ordinary edits go through `persist` below,
+// which only writes the keys that actually changed.
+async function writeAllV5(data) {
+  await Promise.all([
+    storage.set(TEAMS_INDEX_KEY, JSON.stringify(data.teams.map((t) => t.id)), true),
+    ...data.teams.map((t) => storage.set(teamKey(t.id), JSON.stringify(t), true)),
+    storage.set(COMMON_ASSETS_KEY, JSON.stringify(data.placedAssets || []), true),
+    storage.set(COMMON_CONTACTS_KEY, JSON.stringify(data.missionContacts || []), true),
+    storage.set(COMMON_CLOTHING_KEY, JSON.stringify(data.clothingStock || {}), true),
+  ]);
+}
+
+async function loadV5() {
+  const ids = await getJSON(TEAMS_INDEX_KEY, null);
+  if (!ids) return null;
+  const teams = await Promise.all(ids.map((id) => getJSON(teamKey(id), null)));
+  if (teams.some((t) => !t)) return null; // index/teams out of sync -> treat as absent, don't render a broken team
+  const [placedAssets, missionContacts, clothingStock] = await Promise.all([
+    getJSON(COMMON_ASSETS_KEY, []),
+    getJSON(COMMON_CONTACTS_KEY, []),
+    getJSON(COMMON_CLOTHING_KEY, {}),
+  ]);
+  return { teams, placedAssets, missionContacts, clothingStock };
+}
+
+// One-time v4 -> v5 migration: strips the plaintext adminPasscode field
+// (the passcode now lives server-side only, see netlify/functions/storage.js)
+// and re-shapes the single blob into the per-key layout above.
+async function migrateFromV4() {
+  const legacy = await getJSON(LEGACY_V4_KEY, null);
+  if (!legacy) return null;
+  const { adminPasscode, ...rest } = legacy;
+  await writeAllV5(rest);
+  return rest;
+}
+
+async function loadData() {
+  const v5 = await loadV5();
+  if (v5) return v5;
+  const migrated = await migrateFromV4();
+  if (migrated) return migrated;
+  await writeAllV5(SEED);
   return SEED;
 }
 
-async function persist(data) {
+// Diffs `next` against `prev` (the last snapshot we actually persisted) by
+// reference equality — every mutator in this file builds new objects/arrays
+// immutably, so an unchanged team/list keeps the same reference and is
+// skipped here, while a changed one gets a new reference and its key gets
+// rewritten. `prev` is null on the very first save after load, which writes
+// everything once.
+async function persist(next, prev) {
   try {
-    await storage.set(STORAGE_KEY, JSON.stringify(data), true);
+    const writes = [];
+    const prevTeamById = new Map((prev ? prev.teams : []).map((t) => [t.id, t]));
+    const idsChanged = !prev || prev.teams.length !== next.teams.length ||
+      next.teams.some((t, i) => prev.teams[i]?.id !== t.id);
+    if (idsChanged) writes.push(storage.set(TEAMS_INDEX_KEY, JSON.stringify(next.teams.map((t) => t.id)), true));
+    next.teams.forEach((t) => {
+      if (prevTeamById.get(t.id) !== t) writes.push(storage.set(teamKey(t.id), JSON.stringify(t), true));
+    });
+    if (!prev || prev.placedAssets !== next.placedAssets) {
+      writes.push(storage.set(COMMON_ASSETS_KEY, JSON.stringify(next.placedAssets || []), true));
+    }
+    if (!prev || prev.missionContacts !== next.missionContacts) {
+      writes.push(storage.set(COMMON_CONTACTS_KEY, JSON.stringify(next.missionContacts || []), true));
+    }
+    if (!prev || prev.clothingStock !== next.clothingStock) {
+      writes.push(storage.set(COMMON_CLOTHING_KEY, JSON.stringify(next.clothingStock || {}), true));
+    }
+    await Promise.all(writes);
     return true;
   } catch (e) {
     return false;
@@ -469,21 +553,72 @@ export default function MissionPortal() {
   const [activeTeamId, setActiveTeamId] = useState(null);
   const [tab, setTab] = useState("missions");
   const [adminMode, setAdminMode] = useState(false);
-  const [showPasscode, setShowPasscode] = useState(false);
-  const [passInput, setPassInput] = useState("");
-  const [passError, setPassError] = useState("");
   const [showIdentityPicker, setShowIdentityPicker] = useState(false);
   const [editingMonth, setEditingMonth] = useState(false);
   const [monthDraft, setMonthDraft] = useState("");
   const [tourActive, setTourActive] = useState(false);
   const [tourSteps, setTourSteps] = useState([]);
   const [tourStep, setTourStep] = useState(0);
+  // Gate: on the Netlify tier, nothing loads until the shared-team passcode
+  // is verified against the server (see netlify/functions/storage.js). The
+  // Claude-artifact tier has its own per-account storage and skips this.
+  const [gateChecking, setGateChecking] = useState(!hasHostStorage());
+  const [needsPasscode, setNeedsPasscode] = useState(false);
+  const [gateInput, setGateInput] = useState("");
+  const [gateError, setGateError] = useState("");
   const saveTimer = useRef(null);
   const autoTourChecked = useRef(false);
+  const lastPersistedRef = useRef(null);
+
+  // Tries `pass` (or, on boot, whatever's already stored) against the
+  // server. A confirmed wrong passcode (401) re-locks the gate; any other
+  // failure (function unreachable, e.g. plain `npm run dev`) is treated as
+  // "can't enforce this right now" and lets the app through, matching the
+  // rest of this file's fall-through-on-error storage philosophy.
+  async function verifyPasscode(pass) {
+    if (pass !== undefined) setStoredPasscode(pass);
+    try {
+      await storage.list("", true);
+      return true;
+    } catch (e) {
+      if (e && e.status === 401) {
+        clearStoredPasscode();
+        return false;
+      }
+      return true;
+    }
+  }
 
   useEffect(() => {
+    if (hasHostStorage()) return;
+    (async () => {
+      const stored = getStoredPasscode();
+      if (!stored) {
+        setNeedsPasscode(true);
+        setGateChecking(false);
+        return;
+      }
+      const ok = await verifyPasscode();
+      setNeedsPasscode(!ok);
+      setGateChecking(false);
+    })();
+  }, []);
+
+  async function trySiteUnlock() {
+    const ok = await verifyPasscode(gateInput);
+    if (ok) {
+      setGateError("");
+      setNeedsPasscode(false);
+    } else {
+      setGateError("That's not the passcode.");
+    }
+  }
+
+  useEffect(() => {
+    if (gateChecking || needsPasscode) return;
     (async () => {
       const [d, id] = await Promise.all([loadData(), loadIdentity()]);
+      lastPersistedRef.current = d;
       setData(d);
       setActiveTeamId(d.teams[0].id);
       const homeTeam = id && d.teams.find((t) => t.roster.find((r) => r.id === id));
@@ -496,19 +631,21 @@ export default function MissionPortal() {
       }
       setLoading(false);
     })();
-  }, []);
+  }, [gateChecking, needsPasscode]);
 
   // Refetch shared data when the tab regains focus, so teammates' edits
   // made elsewhere show up without a manual reload. Skipped mid-save so it
   // can't clobber an edit that's still in flight.
   useEffect(() => {
     function onFocus() {
-      if (saveState === "saving") return;
-      loadData().then((fresh) => { if (fresh) setData(fresh); });
+      if (saveState === "saving" || gateChecking || needsPasscode) return;
+      loadData().then((fresh) => {
+        if (fresh) { lastPersistedRef.current = fresh; setData(fresh); }
+      });
     }
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [saveState]);
+  }, [saveState, gateChecking, needsPasscode]);
 
   useEffect(() => {
     if (loading || !data || !viewId || autoTourChecked.current) return;
@@ -553,11 +690,48 @@ export default function MissionPortal() {
     setSaveState("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const ok = await persist(next);
+      const prev = lastPersistedRef.current;
+      lastPersistedRef.current = next;
+      const ok = await persist(next, prev);
       setSaveState(ok ? "saved" : "idle");
       setTimeout(() => setSaveState("idle"), 1500);
     }, 350);
   }, []);
+
+  if (gateChecking) {
+    return (
+      <div className="portal-root portal-loading">
+        <PortalStyles />
+        <Loader2 className="spin" size={22} />
+        <span>Checking access…</span>
+      </div>
+    );
+  }
+
+  if (needsPasscode) {
+    return (
+      <div className="portal-root portal-loading">
+        <PortalStyles />
+        <div className="modal-card">
+          <div className="modal-head"><h3>Mission Manifest</h3></div>
+          <div className="modal-body">
+            <p className="muted">Enter the team passcode to continue.</p>
+            <input
+              className="text-input"
+              type="password"
+              autoFocus
+              value={gateInput}
+              onChange={(e) => setGateInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && trySiteUnlock()}
+              placeholder="Passcode"
+            />
+            {gateError && <div className="error-text"><AlertCircle size={14} />{gateError}</div>}
+            <button className="btn btn-primary" onClick={trySiteUnlock}>Continue</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading || !data) {
     return (
@@ -593,17 +767,6 @@ export default function MissionPortal() {
     setViewId(id);
     saveIdentity(id);
     setShowIdentityPicker(false);
-  }
-
-  function tryUnlock() {
-    if (passInput === data.adminPasscode) {
-      setAdminMode(true);
-      setShowPasscode(false);
-      setPassInput("");
-      setPassError("");
-    } else {
-      setPassError("That's not the passcode.");
-    }
   }
 
   // ---- roster mutations (scoped to the active team) ----
@@ -750,26 +913,9 @@ export default function MissionPortal() {
           }}
           onAdminClick={() => {
             setShowIdentityPicker(false);
-            setShowPasscode(true);
+            setAdminMode(true);
           }}
         />
-      )}
-
-      {showPasscode && (
-        <Modal onClose={() => { setShowPasscode(false); setPassError(""); setPassInput(""); }} title="Admin unlock">
-          <p className="muted">Enter the team passcode to edit quotas, missions, and roster.</p>
-          <input
-            className="text-input"
-            type="password"
-            autoFocus
-            value={passInput}
-            onChange={(e) => setPassInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && tryUnlock()}
-            placeholder="Passcode"
-          />
-          {passError && <div className="error-text"><AlertCircle size={14} />{passError}</div>}
-          <button className="btn btn-primary" onClick={tryUnlock}>Unlock</button>
-        </Modal>
       )}
 
       <header className="top-bar">
@@ -832,7 +978,7 @@ export default function MissionPortal() {
               <ShieldOff size={15} /> Exit admin
             </button>
           ) : (
-            <button id="tour-admin-toggle" className="btn btn-ghost" onClick={() => setShowPasscode(true)}>
+            <button id="tour-admin-toggle" className="btn btn-ghost" onClick={() => setAdminMode(true)}>
               <Lock size={15} /> Admin
             </button>
           )}
