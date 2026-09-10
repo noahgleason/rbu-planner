@@ -112,15 +112,16 @@ the older `{catalog, assignments}` shape, and the original single-blob key
 `redbull-mission-portal-v4` is read once for migration but never written or
 deleted, so it remains available as a rollback.
 
-### `/site` — landing page + branch onboarding (proof of concept)
+### The site is the front door; the planner lives at `/plan`
 
-Everything under `/site` (`src/site/*`) is a separate app tree: its own
-styles, its own localStorage key, no shared code with the planner. It has a
-landing page, stub sign-in screens for branch managers and student
-marketeers (no real auth yet), and a branch-setup wizard where a manager
-names their branch and the teams they oversee. `main.jsx` mounts it only
-when the path starts with `/site`; `public/_redirects` makes Netlify serve
-the SPA shell for those deep links.
+`src/site/*` is a separate app tree: its own styles, its own localStorage
+key, no shared code with the planner. It has the public landing page, stub
+sign-in screens for branch managers and student marketeers (no real auth
+yet — they just continue through), and a branch-setup wizard where a manager
+names their branch and the teams they oversee. `main.jsx` mounts the planner
+only at `/plan`; every other path, including the bare `/`, gets the site app
+(which defaults to the landing page). `public/_redirects` makes Netlify
+serve the SPA shell for all of these deep links.
 
 **Note:** the seed data in `MissionPortal.jsx` currently contains real
 teammate names and quotas from the internal planning sheet, for a live

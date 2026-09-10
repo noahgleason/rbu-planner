@@ -194,7 +194,7 @@ function parseMonthLabel(label) {
 // needs zero typing.
 function nextMonthKeyAndLabel(monthKey) {
   const [y, m] = (monthKey || currentMonthKey()).split("-").map(Number);
-  const idx = (m - 1 + 1) % 12;
+  const idx = m % 12;
   const year = m === 12 ? y + 1 : y;
   return { key: `${year}-${String(idx + 1).padStart(2, "0")}`, label: `${MONTH_NAMES[idx]} ${year}` };
 }
@@ -213,7 +213,14 @@ function fillSplits(splits, occasions) {
 // coming straight from SEED (which is still written in the old shape,
 // since it doubles as "what a legacy blob looks like").
 function migrateTeamShape(team) {
-  if (team.missions) return team;
+  if (team.missions) {
+    // Already v5. Every active view filters by `month`, so a team or a
+    // mission that somehow lost its tag would silently show nothing —
+    // heal that here rather than let the plan appear to vanish.
+    const month = team.month || parseMonthLabel(team.monthLabel) || currentMonthKey();
+    const missions = team.missions.map((m) => (m.month ? m : { ...m, month }));
+    return month === team.month && missions.every((m, i) => m === team.missions[i]) ? team : { ...team, month, missions };
+  }
 
   const occasions = team.catalog ? team.catalog.map((c) => c.category) : DEFAULT_OCCASIONS;
   const month = parseMonthLabel(team.monthLabel) || currentMonthKey();
@@ -982,7 +989,9 @@ export default function MissionPortal() {
     const missions = activeTeam.missions
       .filter((m) => !(m.assigneeIds.includes(id) && m.assigneeIds.length === 1))
       .map((m) => (m.assigneeIds.includes(id) ? { ...m, assigneeIds: m.assigneeIds.filter((pid) => pid !== id) } : m));
-    commitTeam({ roster, inventory, missions });
+    const volunteerOpportunities = (activeTeam.volunteerOpportunities || [])
+      .map((o) => ({ ...o, volunteerIds: o.volunteerIds.filter((pid) => pid !== id) }));
+    commitTeam({ roster, inventory, missions, volunteerOpportunities });
     if (viewId === id) setViewId(roster[0] ? roster[0].id : null);
     if (myId === id) {
       setMyId(null);
@@ -1306,7 +1315,12 @@ export default function MissionPortal() {
               missionContacts={data.missionContacts || []}
               isPastMissionsDue={isPastMissionsDue}
               onSelectPerson={(id) => { setViewId(id); setTab("missions"); }}
-              onToggleVolunteer={(oppId) => (myId ? toggleVolunteer(oppId, myId) : setShowIdentityPicker(true))}
+              onToggleVolunteer={(oppId) => (
+                // Only someone on *this* team's roster can sign up here — if
+                // you're viewing another team (or haven't said who you are),
+                // pick an identity on it first.
+                myId && activeTeam.roster.some((r) => r.id === myId) ? toggleVolunteer(oppId, myId) : setShowIdentityPicker(true)
+              )}
             />
           )}
 
@@ -1358,7 +1372,7 @@ export default function MissionPortal() {
               onRemoveMember={removeMember}
               onExport={exportCsv}
               onStartNewMonth={startNewMonth}
-              onUpdateMeta={(field, value) => commitTeam({ [field]: value })}
+              onUpdateMeta={(patch) => commitTeam(patch)}
               onUpdatePlanningConfig={updatePlanningConfig}
               onUpdatePriority={updatePriority}
               onAddOccasion={addOccasion}
@@ -2044,8 +2058,8 @@ function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVol
   );
 }
 
-function StartNewMonthModal({ currentLabel, missionCount, currentMonthKey, onCancel, onConfirm }) {
-  const suggested = nextMonthKeyAndLabel(currentMonthKey);
+function StartNewMonthModal({ currentLabel, missionCount, currentKey, onCancel, onConfirm }) {
+  const suggested = nextMonthKeyAndLabel(currentKey);
   const [label, setLabel] = useState(suggested.label);
 
   return (
@@ -2065,7 +2079,13 @@ function StartNewMonthModal({ currentLabel, missionCount, currentMonthKey, onCan
       <button
         className="btn btn-primary"
         disabled={!label.trim()}
-        onClick={() => onConfirm(suggested.key, label.trim())}
+        onClick={() => {
+          // If they typed a real month ("November 2026"), key the new month
+          // to that so history sorts and reads right; anything else (a
+          // nickname, a typo) just rolls to next month.
+          const parsed = parseMonthLabel(label);
+          onConfirm(parsed && parsed !== currentKey ? parsed : suggested.key, label.trim());
+        }}
       >
         <CalendarPlus size={14} /> Start {label.trim() || "month"}
       </button>
@@ -2145,10 +2165,10 @@ function TeamTab({
   addMember, onUpdateClothingStock, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
   onAddOpportunity, onRemoveOpportunity, onToggleVolunteer,
 }) {
-  const [editingMeta, setEditingMeta] = useState(false);
-  const [monthLabel, setMonthLabel] = useState(data.monthLabel);
-  const [windowNote, setWindowNote] = useState(data.windowNote);
-  const [missionsDue, setMissionsDue] = useState(data.deadlines?.missionsDue || "");
+  // null when not editing. Seeded from `data` at the moment Edit is clicked
+  // (not on mount) so it can never write back values from before a "Start
+  // new month" or a teammate's synced edit.
+  const [metaDraft, setMetaDraft] = useState(null);
   const [newName, setNewName] = useState("");
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeConfirmText, setRemoveConfirmText] = useState("");
@@ -2163,30 +2183,37 @@ function TeamTab({
             <button className="btn btn-ghost btn-sm" onClick={() => setStartingMonth(true)}>
               <CalendarPlus size={14} /> Start new month
             </button>
-            {editingMeta ? (
+            {metaDraft ? (
               <IconBtn
                 title="Save"
                 onClick={() => {
-                  onUpdateMeta("monthLabel", monthLabel);
-                  onUpdateMeta("windowNote", windowNote);
-                  onUpdateMeta("deadlines", { missionsDue: missionsDue || null });
-                  setEditingMeta(false);
+                  onUpdateMeta({
+                    monthLabel: metaDraft.monthLabel.trim() || data.monthLabel,
+                    windowNote: metaDraft.windowNote,
+                    deadlines: { missionsDue: metaDraft.missionsDue || null },
+                  });
+                  setMetaDraft(null);
                 }}
               >
                 <Save size={15} />
               </IconBtn>
             ) : (
-              <IconBtn title="Edit" onClick={() => setEditingMeta(true)}><Pencil size={15} /></IconBtn>
+              <IconBtn
+                title="Edit"
+                onClick={() => setMetaDraft({ monthLabel: data.monthLabel, windowNote: data.windowNote || "", missionsDue: data.deadlines?.missionsDue || "" })}
+              >
+                <Pencil size={15} />
+              </IconBtn>
             )}
           </div>
         </div>
-        {editingMeta ? (
+        {metaDraft ? (
           <div className="meta-edit">
-            <input className="text-input" value={monthLabel} onChange={(e) => setMonthLabel(e.target.value)} placeholder="Month label" />
-            <input className="text-input" value={windowNote} onChange={(e) => setWindowNote(e.target.value)} placeholder="Deadline note" />
+            <input className="text-input" value={metaDraft.monthLabel} onChange={(e) => setMetaDraft({ ...metaDraft, monthLabel: e.target.value })} placeholder="Month label" />
+            <input className="text-input" value={metaDraft.windowNote} onChange={(e) => setMetaDraft({ ...metaDraft, windowNote: e.target.value })} placeholder="Deadline note" />
             <label className="gen-field">
               <span>Missions due</span>
-              <input className="text-input" type="date" value={missionsDue} onChange={(e) => setMissionsDue(e.target.value)} />
+              <input className="text-input" type="date" value={metaDraft.missionsDue} onChange={(e) => setMetaDraft({ ...metaDraft, missionsDue: e.target.value })} />
             </label>
           </div>
         ) : (
@@ -2201,7 +2228,7 @@ function TeamTab({
         <StartNewMonthModal
           currentLabel={data.monthLabel}
           missionCount={data.missions.length}
-          currentMonthKey={data.month}
+          currentKey={data.month}
           onCancel={() => setStartingMonth(false)}
           onConfirm={(key, label) => { onStartNewMonth(key, label); setStartingMonth(false); }}
         />
@@ -2357,6 +2384,12 @@ function TeamTab({
 
 function PlanGenerator({ config, roster, occasions, onUpdateConfig, onGenerate }) {
   const [local, setLocal] = useState(config);
+  // `local` only exists so the inputs stay responsive; the committed config
+  // is the source of truth. Re-sync whenever it changes underneath us —
+  // "Start new month" zeroing the goal, or a teammate's edit arriving via
+  // the focus refetch — otherwise the next keystroke here would spread the
+  // stale copy back over the fresh one and resurrect the old numbers.
+  useEffect(() => { setLocal(config); }, [config]);
   const [pinPerson, setPinPerson] = useState(roster[0]?.id || "");
   const [pinOccasion, setPinOccasion] = useState(occasions[0]);
   const [pinCount, setPinCount] = useState(1);

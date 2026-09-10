@@ -30,7 +30,7 @@ function PlanMock() {
         <div className="site-mock-topbar">
           <div>
             <strong>September — Lansing</strong>
-            <span>Missions due 9/2 · Edits due 9/4</span>
+            <span>Missions due 9/2</span>
           </div>
           <span className="site-mock-pill site-mock-pill-ok">Saved</span>
         </div>
@@ -87,7 +87,7 @@ function SmMock() {
             <b>{r.occasion}</b>
             <em>{r.directive}</em>
             <span className={r.location ? "" : "site-mock-tbd"}>
-              <MapPin size={11} /> {r.location || "Add a location…"}
+              <MapPin size={11} /> {r.location || "No location suggested yet"}
             </span>
           </div>
         </div>
@@ -158,7 +158,7 @@ export default function Landing() {
           <li>
             <span className="site-step-num">4</span>
             <h3>The team runs it</h3>
-            <p>Each marketeer sees only their missions, picks locations, and checks them off as they go.</p>
+            <p>Each marketeer sees only their missions — with any location the manager suggested — and checks them off as they go.</p>
           </li>
         </ol>
       </section>
@@ -169,7 +169,7 @@ export default function Landing() {
           <h2>Everyone sees their part — and only their part.</h2>
           <p className="site-split-text">
             No hunting through a shared sheet. Your missions, the manager's directive for each one, your partner,
-            your date, and a place to log the location you picked. Gear and placements live right next to it.
+            your date, and any location they've suggested. Gear, placements, and volunteer sign-ups live right next to it.
           </p>
           <div className="site-feature-grid site-feature-grid-2">
             <div className="site-feature-card">
