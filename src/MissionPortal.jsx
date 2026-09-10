@@ -252,7 +252,7 @@ function migrateTeamShape(team) {
     ...rest,
     occasions,
     month,
-    deadlines: { missionsDue: null, editsDue: null },
+    deadlines: { missionsDue: null },
     planningConfig: { ...team.planningConfig, splits: fillSplits(team.planningConfig?.splits, occasions), pins: [] },
     missions,
   };
@@ -299,7 +299,7 @@ const TOUR_STEPS_BASE = [
     target: "#tour-missions-card",
     setup: (ctx) => ctx.setTab("missions"),
     title: "Your missions",
-    body: "Check missions off as you complete them, and fill in the location once you've picked one.",
+    body: "Check missions off as you complete them. Your team lead may suggest a location for some — that shows up here too.",
   },
   {
     target: "#tour-nav",
@@ -360,7 +360,7 @@ const ADMIN_TOUR_STEPS = [
     target: "#tour-planning-header",
     setup: (ctx) => ctx.setTab("team"),
     title: "Planning header",
-    body: "Set the deadline note shown to the whole team and the actual missions-due/edits-due dates — once those pass, the dashboard flags anything still missing a location, and non-admins can no longer edit their own location. When the month's done, use “Start new month” here — it archives this month's missions to read-only history and gives you a fresh goal and deadlines to fill in.",
+    body: "Set the deadline note shown to the whole team and the actual missions-due date — once it passes, the dashboard flags anything still missing a location. When the month's done, use “Start new month” here — it archives this month's missions to read-only history and gives you a fresh goal and deadline to fill in.",
   },
   {
     target: "#tour-occasions-card",
@@ -912,7 +912,6 @@ export default function MissionPortal() {
   const currentMonthTeam = { ...activeTeam, missions: activeTeam.missions.filter((m) => m.month === activeTeam.month) };
   const today = new Date().toISOString().slice(0, 10);
   const isPastMissionsDue = !!(activeTeam.deadlines?.missionsDue && today > activeTeam.deadlines.missionsDue);
-  const isPastEditsDue = !!(activeTeam.deadlines?.editsDue && today > activeTeam.deadlines.editsDue);
 
   // Applies a patch (object, or updater function receiving the current team)
   // to whichever team is active, and commits the whole document.
@@ -929,7 +928,6 @@ export default function MissionPortal() {
   }
 
   const viewer = activeTeam.roster.find((r) => r.id === viewId) || null;
-  const isViewingSelf = viewId === myId;
 
   function pickIdentity(id) {
     setMyId(id);
@@ -1012,7 +1010,7 @@ export default function MissionPortal() {
         monthLabel: newMonthLabel,
         monthHistory,
         windowNote: "",
-        deadlines: { missionsDue: null, editsDue: null },
+        deadlines: { missionsDue: null },
         planningConfig: { ...t.planningConfig, cansGoal: 0, totalCases: 0 },
       };
     });
@@ -1278,7 +1276,6 @@ export default function MissionPortal() {
               data={currentMonthTeam}
               viewer={viewer}
               adminMode={adminMode}
-              canEditLocation={adminMode || (isViewingSelf && !isPastEditsDue)}
               onAdd={addMission}
               onToggle={toggleMissionDone}
               onRemove={removeMission}
@@ -1569,7 +1566,7 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
   );
 }
 
-function MissionsTab({ data, viewer, adminMode, canEditLocation, onAdd, onToggle, onRemove, onUpdateMission }) {
+function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpdateMission }) {
   const list = data.missions.filter((m) => m.assigneeIds.includes(viewer.id));
   const [newOccasion, setNewOccasion] = useState(data.occasions[0]);
   const [newDirective, setNewDirective] = useState("");
@@ -1597,10 +1594,10 @@ function MissionsTab({ data, viewer, adminMode, canEditLocation, onAdd, onToggle
         </div>
 
         {list.length === 0 && <p className="muted empty-hint">No missions assigned yet.</p>}
-        {missingLocations > 0 && canEditLocation && (
+        {missingLocations > 0 && adminMode && (
           <p className="muted empty-hint">
             <AlertCircle size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />
-            {missingLocations} mission{missingLocations > 1 ? "s" : ""} still need a location — tap to add one.
+            {missingLocations} mission{missingLocations > 1 ? "s" : ""} still need a location — tap to suggest one.
           </p>
         )}
 
@@ -1608,6 +1605,13 @@ function MissionsTab({ data, viewer, adminMode, canEditLocation, onAdd, onToggle
           {list.map((m) => {
             const partnerId = m.assigneeIds.find((id) => id !== viewer.id);
             const done = m.status === "completed";
+            // Location is an admin-set suggestion, not something the student
+            // picks — this is the "what needs to be planned" view, not the
+            // planning app. Seeding is the one exception: its "location"
+            // field is really a self-reported cans-placed count, which is
+            // the student's own report of work done, same as checking a
+            // mission off.
+            const canEditField = adminMode || m.kind === "seeding";
             return (
               <li key={m.id} className={`mission-row ${done ? "mission-done" : ""}`}>
                 <button className="mission-check" onClick={() => onToggle(m.id)}>
@@ -1616,20 +1620,20 @@ function MissionsTab({ data, viewer, adminMode, canEditLocation, onAdd, onToggle
                 <div className="mission-text">
                   <span className="mission-cat">{m.occasion}</span>
                   {m.directive && <span className="mission-directive">{m.directive}</span>}
-                  {canEditLocation ? (
+                  {canEditField ? (
                     <input
                       className="mission-note-input"
                       type={m.kind === "seeding" ? "number" : "text"}
                       min={m.kind === "seeding" ? "0" : undefined}
                       value={m.location}
-                      placeholder={m.kind === "seeding" ? "Cans placed" : "Add a location…"}
+                      placeholder={m.kind === "seeding" ? "Cans placed" : "Suggested location…"}
                       onChange={(e) => onUpdateMission(m.id, { location: e.target.value })}
                     />
                   ) : (
                     <span className="mission-note">
                       {m.kind === "seeding"
                         ? (m.location ? `${m.location} cans placed` : "No cans logged yet")
-                        : (m.location || "Location TBD")}
+                        : (m.location || "No location suggested yet")}
                     </span>
                   )}
                   {(m.date || partnerId) && (
@@ -1977,7 +1981,6 @@ function TeamTab({
   const [monthLabel, setMonthLabel] = useState(data.monthLabel);
   const [windowNote, setWindowNote] = useState(data.windowNote);
   const [missionsDue, setMissionsDue] = useState(data.deadlines?.missionsDue || "");
-  const [editsDue, setEditsDue] = useState(data.deadlines?.editsDue || "");
   const [newName, setNewName] = useState("");
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeConfirmText, setRemoveConfirmText] = useState("");
@@ -1998,7 +2001,7 @@ function TeamTab({
                 onClick={() => {
                   onUpdateMeta("monthLabel", monthLabel);
                   onUpdateMeta("windowNote", windowNote);
-                  onUpdateMeta("deadlines", { missionsDue: missionsDue || null, editsDue: editsDue || null });
+                  onUpdateMeta("deadlines", { missionsDue: missionsDue || null });
                   setEditingMeta(false);
                 }}
               >
@@ -2016,10 +2019,6 @@ function TeamTab({
             <label className="gen-field">
               <span>Missions due</span>
               <input className="text-input" type="date" value={missionsDue} onChange={(e) => setMissionsDue(e.target.value)} />
-            </label>
-            <label className="gen-field">
-              <span>Edits due</span>
-              <input className="text-input" type="date" value={editsDue} onChange={(e) => setEditsDue(e.target.value)} />
             </label>
           </div>
         ) : (
