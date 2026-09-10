@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import Landing from "./Landing.jsx";
 import BranchSetup from "./BranchSetup.jsx";
 import LoginStub from "./LoginStub.jsx";
@@ -15,10 +15,21 @@ import SiteStyles from "./SiteStyles.jsx";
 export default function SiteApp() {
   const path = window.location.pathname;
   let page;
-  if (path.startsWith("/site/branch-setup")) page = <BranchSetup />;
-  else if (path.startsWith("/site/login/manager")) page = <LoginStub role="Branch Manager" nextHref="/site/branch-setup" />;
-  else if (path.startsWith("/site/login/sm")) page = <LoginStub role="Student Marketeer" nextHref="/" />;
-  else page = <Landing />;
+  let title = "Mission Manifest";
+  if (path.startsWith("/site/branch-setup")) {
+    page = <BranchSetup />;
+    title = "Set up your branch — Mission Manifest";
+  } else if (path.startsWith("/site/login/manager")) {
+    page = <LoginStub role="Branch Manager" nextHref="/site/branch-setup" />;
+    title = "Branch Manager sign-in — Mission Manifest";
+  } else if (path.startsWith("/site/login/sm")) {
+    page = <LoginStub role="Student Marketeer" nextHref="/" />;
+    title = "SM sign-in — Mission Manifest";
+  } else {
+    page = <Landing />;
+  }
+
+  useEffect(() => { document.title = title; }, [title]);
 
   return (
     <div className="site-root">

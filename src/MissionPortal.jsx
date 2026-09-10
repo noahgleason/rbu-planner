@@ -1223,6 +1223,7 @@ export default function MissionPortal() {
 
           {viewer && tab === "missions" && (
             <MissionsTab
+              key={`${activeTeam.id}:${viewer.id}`}
               data={activeTeam}
               viewer={viewer}
               adminMode={adminMode}
@@ -1254,6 +1255,7 @@ export default function MissionPortal() {
 
           {adminMode && tab === "team" && (
             <TeamTab
+              key={activeTeam.id}
               data={activeTeam}
               clothingStock={data.clothingStock || {}}
               onRemoveMember={removeMember}
@@ -1290,6 +1292,15 @@ export default function MissionPortal() {
           <button className="btn btn-ghost btn-sm" onClick={startTour}>
             <HelpCircle size={14} /> Tutorial mode
           </button>
+          {!hasHostStorage() && (
+            <button
+              className="btn btn-ghost btn-sm"
+              title="Forget the passcode on this device"
+              onClick={() => { clearStoredPasscode(); window.location.reload(); }}
+            >
+              <Lock size={14} /> Lock
+            </button>
+          )}
         </div>
       </footer>
 
@@ -1414,6 +1425,12 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
   const contacts = missionContacts;
   const overdue = data.missions.filter((m) => !m.location.trim() && !m.date.trim());
   const quotaSummary = computeQuotaSummary(data).filter((q) => q.planned > 0);
+  const lastChange = data.missions
+    .filter((m) => m.updatedBy && m.updatedBy !== "migration")
+    .reduce((latest, m) => (!latest || m.updatedAt > latest.updatedAt ? m : latest), null);
+  const lastChangeLabel = lastChange
+    ? `Last change ${new Date(lastChange.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by ${lastChange.updatedBy}`
+    : null;
 
   return (
     <div className="tab-content">
@@ -1425,6 +1442,7 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
           </Badge>
         </div>
         <p className="muted">{data.windowNote}</p>
+        {lastChangeLabel && <p className="muted empty-hint">{lastChangeLabel}</p>}
         {isPastMissionsDue && overdue.length > 0 && (
           <p className="muted empty-hint overdue-hint">
             <AlertCircle size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />
@@ -2211,6 +2229,7 @@ function MissionsPlanTable({ team, onUpdateMission, onRemoveMission, onAddMissio
   return (
     <section className="card" id="tour-plan-table-card">
       <div className="card-head"><h2>Missions</h2><Badge>{team.missions.length}</Badge></div>
+      <p className="muted empty-hint">Every mission, editable inline. Rows with a blue edge are untouched generator drafts — they're the only ones a re-generate will replace.</p>
 
       <div className="plan-filters">
         <select className="text-input select-input select-input-sm" value={occasionFilter} onChange={(e) => setOccasionFilter(e.target.value)}>
@@ -2638,15 +2657,22 @@ function PortalStyles() {
 
       .plan-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
       .plan-filter-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft); }
-      .plan-table { display: flex; flex-direction: column; gap: 4px; overflow-x: auto; }
+      .plan-table { display: flex; flex-direction: column; gap: 4px; overflow-x: auto; padding-bottom: 4px; }
       .plan-table-head, .plan-table-row {
         display: grid;
-        grid-template-columns: 130px 130px 1fr 130px 130px 1fr 32px 32px;
-        gap: 8px; align-items: center; min-width: 900px;
+        grid-template-columns: minmax(100px, 1.1fr) minmax(100px, 1fr) minmax(130px, 1.6fr) minmax(96px, 1fr) 126px minmax(110px, 1.4fr) 28px 28px;
+        gap: 6px; align-items: center; min-width: 760px;
       }
+      .plan-table-head > *, .plan-table-row > * { min-width: 0; }
+      .plan-table-row .text-input, .plan-table-row .select-input {
+        width: 100%; min-width: 0; box-sizing: border-box; flex: none;
+        padding: 6px 8px; font-size: 12.5px;
+      }
+      .plan-table-row .icon-btn { width: 28px; height: 28px; }
       .plan-table-head { font-size: 11px; color: var(--ink-soft); padding: 0 2px 4px; }
       .plan-table-row { padding: 5px 2px; border-bottom: 1px solid var(--line); }
-      .plan-row-draft { opacity: 0.55; }
+      .plan-row-draft { box-shadow: inset 3px 0 0 rgba(27,106,238,0.45); }
+      .plan-row-draft .text-input::placeholder { color: rgba(0,15,30,0.35); }
       .mission-directive { font-size: 12px; color: var(--ink-soft); font-style: italic; }
       .mission-secondary { font-size: 11.5px; color: var(--ink-soft); }
       .overdue-hint { color: var(--danger); }

@@ -87,8 +87,40 @@ npm run dev:netlify        # local dev with real Blobs-backed sync
 ```
 
 Once the site is deployed on Netlify (`git push`, or `netlify deploy --prod`),
-Blobs works automatically — no extra configuration or environment variables
-needed.
+Blobs works automatically. One environment variable is required:
+
+```bash
+npx netlify env:set ADMIN_PASSCODE "your-team-passcode"
+```
+
+The storage function refuses every request (reads included) unless the
+`x-passcode` header matches this value, and the app shows a passcode gate
+before loading anything. `netlify dev` picks the variable up automatically
+from the linked site.
+
+### Storage layout (v5)
+
+Data is split across per-team Netlify Blobs keys so editing one team's plan
+never collides with a write to another's:
+
+- `v5:teams-index` — list of team ids
+- `v5:team:<id>` — one team: roster, occasions, planning config, missions
+- `v5:common:assets` / `...:contacts` / `...:clothing` — shared gear log
+
+A team doc is upgraded in place on load (`migrateTeamShape`) if it's still in
+the older `{catalog, assignments}` shape, and the original single-blob key
+`redbull-mission-portal-v4` is read once for migration but never written or
+deleted, so it remains available as a rollback.
+
+### `/site` — landing page + branch onboarding (proof of concept)
+
+Everything under `/site` (`src/site/*`) is a separate app tree: its own
+styles, its own localStorage key, no shared code with the planner. It has a
+landing page, stub sign-in screens for branch managers and student
+marketeers (no real auth yet), and a branch-setup wizard where a manager
+names their branch and the teams they oversee. `main.jsx` mounts it only
+when the path starts with `/site`; `public/_redirects` makes Netlify serve
+the SPA shell for those deep links.
 
 **Note:** the seed data in `MissionPortal.jsx` currently contains real
 teammate names and quotas from the internal planning sheet, for a live
@@ -102,14 +134,10 @@ npm install
 npm run dev
 ```
 
-Then open the printed local URL. Admin passcode for the demo data is
-`changeme` — change it from the "Team & quotas" tab once you're in (or edit
-`adminPasscode` in the seed data before deploying).
-
-**Note:** this passcode check is purely client-side (a plaintext string
-comparison in the bundled JS) and offers no real access control — anyone can
-read it out of dev tools or the built bundle. Treat it as a UI convenience,
-not authentication, until real auth (see "Next steps" below) is in place.
+Then open the printed local URL. Plain `npm run dev` has no storage function
+to talk to, so the passcode gate lets you through and shared data falls back
+to seed/localStorage — fine for UI work. Use `npm run dev:netlify` to exercise
+the real passcode check and synced storage locally.
 
 Requires Node 18+.
 
@@ -129,11 +157,10 @@ above — see "Setting up Netlify Blobs" in the Data & storage section.
 This is intentionally a working pilot, not a finished product. If it proves
 useful for a real team, the honest next steps are:
 
-1. **Real authentication**, ideally tied into an organization's existing
-   identity provider (e.g. Microsoft Entra ID / SSO), rather than a single
-   shared admin passcode. The backend now syncs everyone's data through one
-   unauthenticated Netlify Function — fine for a small trusted pilot team
-   with the URL, not something to expose broadly without this.
+1. **Real authentication** — per-branch-manager and per-marketeer accounts
+   (the `/site` login screens are the placeholder for this), ideally tied
+   into an organization's existing identity provider rather than the single
+   shared passcode that gates the storage function today.
 2. **Two-way sync with the existing planning spreadsheet**, if leadership
    wants to keep the source of truth in Excel/SharePoint — likely via
    Microsoft Graph API, which needs org-level app registration and IT
