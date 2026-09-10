@@ -68,7 +68,7 @@ export default function BranchSetup() {
         </ul>
         <button className="site-btn site-btn-outline" onClick={() => setIsSaved(false)}>Edit setup</button>
         <div style={{ marginTop: 10 }}>
-          <a className="site-btn site-btn-primary" href="/">Go to the planner</a>
+          <a className="site-btn site-btn-primary" href="/plan">Go to the planner</a>
         </div>
       </div>
     );

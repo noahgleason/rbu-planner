@@ -6,9 +6,10 @@ import SiteStyles from "./SiteStyles.jsx";
 
 // A deliberately separate app tree from MissionPortal.jsx — different
 // component tree, different storage (see BranchSetup's own localStorage
-// key), different styles (all classNames prefixed `site-`). Lives under
-// the /site path prefix; main.jsx picks this or MissionPortal based on
-// the URL, and nothing here imports from or writes to the planner's data.
+// key), different styles (all classNames prefixed `site-`). main.jsx boots
+// this for every path except /plan (the real planner), so it's also what
+// renders at the bare "/" — the site is the front door, not the planner.
+// Nothing here imports from or writes to the planner's data.
 //
 // Plain full-navigation <a href> links between pages (no client router) —
 // this is a proof of concept, not the production auth flow.
@@ -23,7 +24,7 @@ export default function SiteApp() {
     page = <LoginStub role="Branch Manager" nextHref="/site/branch-setup" />;
     title = "Branch Manager sign-in — Mission Manifest";
   } else if (path.startsWith("/site/login/sm")) {
-    page = <LoginStub role="Student Marketeer" nextHref="/" />;
+    page = <LoginStub role="Student Marketeer" nextHref="/plan" />;
     title = "SM sign-in — Mission Manifest";
   } else {
     page = <Landing />;

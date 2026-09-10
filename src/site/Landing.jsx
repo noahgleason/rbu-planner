@@ -194,7 +194,7 @@ export default function Landing() {
         <p>Name it, add the teams you manage, and start planning this month.</p>
         <div className="site-hero-actions">
           <a className="site-btn site-btn-primary site-btn-lg" href="/site/branch-setup">Set up your branch <ArrowRight size={15} /></a>
-          <a className="site-btn site-btn-outline site-btn-lg" href="/">Open the planner</a>
+          <a className="site-btn site-btn-outline site-btn-lg" href="/plan">Open the planner</a>
         </div>
       </section>
 
@@ -203,7 +203,7 @@ export default function Landing() {
           <a href="/site/branch-setup">Branch setup</a>
           <a href="/site/login/manager">Branch Manager Login</a>
           <a href="/site/login/sm">SM Login</a>
-          <a href="/">Planner</a>
+          <a href="/plan">Planner</a>
         </div>
         <span>Mission Manifest — an independent field-marketing planning tool. Not affiliated with or endorsed by any brand.</span>
       </footer>
