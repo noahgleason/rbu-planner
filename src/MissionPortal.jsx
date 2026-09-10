@@ -3,7 +3,7 @@ import {
   Truck, Package, ShieldCheck, ShieldOff, CheckCircle2, Circle, Plus, Trash2,
   Lock, Unlock, Download, X, Users, ClipboardList, Shirt, Refrigerator,
   ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
-  LayoutDashboard,
+  LayoutDashboard, CalendarPlus, History,
 } from "lucide-react";
 import storage, {
   hasHostStorage, getStoredPasscode, setStoredPasscode, clearStoredPasscode,
@@ -189,6 +189,16 @@ function parseMonthLabel(label) {
   return `${m[2]}-${String(idx + 1).padStart(2, "0")}`;
 }
 
+// "2026-09" -> "October 2026" (the month after). Used to default the "Start
+// new month" prompt so the common case (rolling straight into next month)
+// needs zero typing.
+function nextMonthKeyAndLabel(monthKey) {
+  const [y, m] = (monthKey || currentMonthKey()).split("-").map(Number);
+  const idx = (m - 1 + 1) % 12;
+  const year = m === 12 ? y + 1 : y;
+  return { key: `${year}-${String(idx + 1).padStart(2, "0")}`, label: `${MONTH_NAMES[idx]} ${year}` };
+}
+
 function fillSplits(splits, occasions) {
   const out = {};
   occasions.forEach((o) => { out[o] = (splits && splits[o]) || 0; });
@@ -252,12 +262,17 @@ function migrateTeamShape(team) {
 // available/remaining catalog. `planned` is the same round(total * split%)
 // formula the generator uses; `assigned` counts real missions that exist
 // right now (any status except cancelled); `remaining` is never negative.
-function computeQuotaSummary(team) {
+// `month` defaults to the team's current month — quotas are always about
+// "this month's" plan, never the whole mission history. Pass an explicit
+// past month (see MonthHistory) to tally a closed month instead; in that
+// case `planned` isn't meaningful (today's splits/goal don't describe a past
+// month) so callers viewing history should ignore it and use `assigned`.
+function computeQuotaSummary(team, month = team.month) {
   const totalMissions = Math.max(0, Math.round((team.planningConfig?.totalCases || 0) / (team.planningConfig?.casesPerMission || 1)));
   return (team.occasions || []).map((occasion) => {
     const pct = team.planningConfig?.splits?.[occasion] || 0;
     const planned = Math.round(totalMissions * (pct / 100));
-    const assigned = team.missions.filter((m) => m.occasion === occasion && m.status !== "cancelled").length;
+    const assigned = team.missions.filter((m) => m.occasion === occasion && m.status !== "cancelled" && m.month === month).length;
     return { occasion, planned, assigned, remaining: Math.max(0, planned - assigned) };
   });
 }
@@ -345,7 +360,7 @@ const ADMIN_TOUR_STEPS = [
     target: "#tour-planning-header",
     setup: (ctx) => ctx.setTab("team"),
     title: "Planning header",
-    body: "Set the month label, the deadline note shown to the whole team, and the actual missions-due/edits-due dates — once those pass, the dashboard flags anything still missing a location, and non-admins can no longer edit their own location.",
+    body: "Set the deadline note shown to the whole team and the actual missions-due/edits-due dates — once those pass, the dashboard flags anything still missing a location, and non-admins can no longer edit their own location. When the month's done, use “Start new month” here — it archives this month's missions to read-only history and gives you a fresh goal and deadlines to fill in.",
   },
   {
     target: "#tour-occasions-card",
@@ -446,6 +461,11 @@ function planGeneration(config, roster, occasions, existingMissions, month, acto
   const pins = config.pins || [];
   const now = new Date().toISOString();
 
+  // Only this month's missions are eligible to be topped up or replaced —
+  // a past month's completed/leftover missions must never count toward (or
+  // get swept up by) the current month's generate.
+  const scoped = existingMissions.filter((m) => m.month === month);
+
   const removeIds = [];
   const toAdd = [];
   let keptCount = 0;
@@ -453,7 +473,7 @@ function planGeneration(config, roster, occasions, existingMissions, month, acto
   occasions.forEach((occasion) => {
     const pct = config.splits[occasion] || 0;
     const target = Math.round(totalMissions * (pct / 100));
-    const forOccasion = existingMissions.filter((m) => m.occasion === occasion);
+    const forOccasion = scoped.filter((m) => m.occasion === occasion);
     const untouchedDrafts = forOccasion.filter((m) => m.status === "draft" && !m.directive.trim());
     const kept = forOccasion.length - untouchedDrafts.length;
     keptCount += kept;
@@ -884,6 +904,12 @@ export default function MissionPortal() {
   }
 
   const activeTeam = data.teams.find((t) => t.id === activeTeamId) || data.teams[0];
+  // Every day-to-day view (dashboard, roster rail, missions tab, plan table,
+  // quotas) should only ever see *this* month's missions — older months are
+  // done and belong in the read-only history view, not mixed into today's
+  // counts. Mutations still go through `activeTeam`/`commitTeam` (the full,
+  // unfiltered mission array) so nothing here can accidentally lose history.
+  const currentMonthTeam = { ...activeTeam, missions: activeTeam.missions.filter((m) => m.month === activeTeam.month) };
   const today = new Date().toISOString().slice(0, 10);
   const isPastMissionsDue = !!(activeTeam.deadlines?.missionsDue && today > activeTeam.deadlines.missionsDue);
   const isPastEditsDue = !!(activeTeam.deadlines?.editsDue && today > activeTeam.deadlines.editsDue);
@@ -965,6 +991,31 @@ export default function MissionPortal() {
 
   function updatePriority(personId, priority) {
     commitTeam((t) => ({ roster: t.roster.map((p) => (p.id === personId ? { ...p, priority } : p)) }));
+  }
+
+  // Closes out the current month and opens a new one. Missions themselves
+  // are never touched here — they're already tagged with the month they
+  // were created in, so simply moving `team.month` forward is what makes
+  // last month's missions fall out of every active view (dashboard, roster
+  // rail, quotas, plan table, generate) and into read-only history, while
+  // the raw data stays in `missions` forever for that history view and CSV
+  // export. `monthHistory` records the *label* for that month so history
+  // can show "September 2026" instead of a bare "2026-09" key.
+  function startNewMonth(newMonthKey, newMonthLabel) {
+    setGeneratePreview(null);
+    commitTeam((t) => {
+      const monthHistory = (t.monthHistory || []).some((h) => h.month === t.month)
+        ? t.monthHistory
+        : [...(t.monthHistory || []), { month: t.month, label: t.monthLabel }];
+      return {
+        month: newMonthKey,
+        monthLabel: newMonthLabel,
+        monthHistory,
+        windowNote: "",
+        deadlines: { missionsDue: null, editsDue: null },
+        planningConfig: { ...t.planningConfig, cansGoal: 0, totalCases: 0 },
+      };
+    });
   }
 
   // ---- plan generation (preview, then explicit confirm/cancel) ----
@@ -1068,10 +1119,10 @@ export default function MissionPortal() {
     commit({ ...data, clothingStock: { ...(data.clothingStock || {}), [size]: value } });
   }
 
-  function exportCsv() {
+  function exportCsv(month = activeTeam.month, label = activeTeam.monthLabel) {
     const nameOf = (id) => activeTeam.roster.find((r) => r.id === id)?.name || "Unassigned";
     const rows = [["Person", "Partner", "Occasion", "Directive", "Date", "Location", "Status"]];
-    activeTeam.missions.forEach((m) => {
+    activeTeam.missions.filter((m) => m.month === month).forEach((m) => {
       const [primary, ...rest] = m.assigneeIds.length ? m.assigneeIds.map(nameOf) : ["Unassigned"];
       rows.push([primary, rest.join(", "), m.occasion, m.directive, m.date, m.location, m.status]);
     });
@@ -1080,7 +1131,7 @@ export default function MissionPortal() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${activeTeam.monthLabel.replace(/[^\w]+/g, "-")}-missions.csv`;
+    a.download = `${label.replace(/[^\w]+/g, "-")}-missions.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -1185,7 +1236,7 @@ export default function MissionPortal() {
           <div className="rail-label">{activeTeam.name}</div>
           <nav>
             {activeTeam.roster.map((p) => {
-              const list = activeTeam.missions.filter((m) => m.assigneeIds.includes(p.id));
+              const list = currentMonthTeam.missions.filter((m) => m.assigneeIds.includes(p.id));
               const done = list.filter((m) => m.status === "completed").length;
               return (
                 <button
@@ -1205,7 +1256,7 @@ export default function MissionPortal() {
         <main className="main-panel">
           {tab === "dashboard" && (
             <DashboardTab
-              data={activeTeam}
+              data={currentMonthTeam}
               myId={myId}
               placedAssets={data.placedAssets || []}
               missionContacts={data.missionContacts || []}
@@ -1224,7 +1275,7 @@ export default function MissionPortal() {
           {viewer && tab === "missions" && (
             <MissionsTab
               key={`${activeTeam.id}:${viewer.id}`}
-              data={activeTeam}
+              data={currentMonthTeam}
               viewer={viewer}
               adminMode={adminMode}
               canEditLocation={adminMode || (isViewingSelf && !isPastEditsDue)}
@@ -1256,10 +1307,13 @@ export default function MissionPortal() {
           {adminMode && tab === "team" && (
             <TeamTab
               key={activeTeam.id}
-              data={activeTeam}
+              data={currentMonthTeam}
+              allMissions={activeTeam.missions}
+              monthHistory={activeTeam.monthHistory || []}
               clothingStock={data.clothingStock || {}}
               onRemoveMember={removeMember}
               onExport={exportCsv}
+              onStartNewMonth={startNewMonth}
               onUpdateMeta={(field, value) => commitTeam({ [field]: value })}
               onUpdatePlanningConfig={updatePlanningConfig}
               onUpdatePriority={updatePriority}
@@ -1816,8 +1870,106 @@ function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem, 
   );
 }
 
+// Confirmation modal for rolling into a new month — spells out exactly what
+// moves to read-only history vs. what resets vs. what carries over, so
+// there's no ambiguity about what clicking "Start month" is about to do.
+function StartNewMonthModal({ currentLabel, missionCount, currentMonthKey, onCancel, onConfirm }) {
+  const suggested = nextMonthKeyAndLabel(currentMonthKey);
+  const [label, setLabel] = useState(suggested.label);
+
+  return (
+    <Modal onClose={onCancel} title="Start new month">
+      <p className="muted">
+        This closes out <strong>{currentLabel}</strong> and starts a new month.
+      </p>
+      <ul className="start-month-list">
+        <li>{missionCount} mission{missionCount === 1 ? "" : "s"} from {currentLabel} move to read-only history — nothing is deleted, and they stay exportable.</li>
+        <li>The monthly can goal and both deadline dates reset to blank, so you enter this month's real numbers.</li>
+        <li>Occasion splits, roster, priorities, and clothing stock carry over unchanged.</li>
+      </ul>
+      <label className="gen-field" style={{ marginTop: 4 }}>
+        <span>New month label</span>
+        <input className="text-input" autoFocus value={label} onChange={(e) => setLabel(e.target.value)} />
+      </label>
+      <button
+        className="btn btn-primary"
+        disabled={!label.trim()}
+        onClick={() => onConfirm(suggested.key, label.trim())}
+      >
+        <CalendarPlus size={14} /> Start {label.trim() || "month"}
+      </button>
+      <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+    </Modal>
+  );
+}
+
+// Read-only record of months that have been closed out via "Start new
+// month" — the missions themselves are never deleted, just no longer part
+// of any active view, so this is the one place left to look them up.
+function MonthHistoryCard({ monthHistory, allMissions, roster, onExport }) {
+  const [viewing, setViewing] = useState(null);
+  const nameOf = (id) => roster.find((r) => r.id === id)?.name || "Unassigned";
+  const sorted = [...monthHistory].sort((a, b) => b.month.localeCompare(a.month));
+
+  if (sorted.length === 0) return null;
+
+  const viewingMissions = viewing ? allMissions.filter((m) => m.month === viewing.month) : [];
+  const tally = {};
+  viewingMissions.forEach((m) => {
+    if (!tally[m.occasion]) tally[m.occasion] = { total: 0, completed: 0 };
+    tally[m.occasion].total += 1;
+    if (m.status === "completed") tally[m.occasion].completed += 1;
+  });
+
+  return (
+    <section className="card" id="tour-month-history-card">
+      <div className="card-head"><h2><History size={16} /> Past months</h2><Badge>{sorted.length}</Badge></div>
+      <p className="muted empty-hint">Read-only — closed-out months, kept for the record. Nothing here can be edited.</p>
+      <ul className="month-history-list">
+        {sorted.map((h) => {
+          const count = allMissions.filter((m) => m.month === h.month).length;
+          const done = allMissions.filter((m) => m.month === h.month && m.status === "completed").length;
+          return (
+            <li key={h.month} className="month-history-row">
+              <span className="month-history-label">{h.label}</span>
+              <span className="muted">{done}/{count} complete</span>
+              <button className="btn btn-ghost btn-sm" onClick={() => setViewing(h)}>View</button>
+            </li>
+          );
+        })}
+      </ul>
+
+      {viewing && (
+        <Modal onClose={() => setViewing(null)} title={viewing.label}>
+          <div className="quota-table quota-table-2col">
+            <div className="quota-table-head"><span>Occasion</span><span>Complete</span></div>
+            {Object.entries(tally).map(([occasion, t]) => (
+              <div className="quota-table-row quota-table-row-readonly" key={occasion}>
+                <span>{occasion}</span><span>{t.completed}/{t.total}</span>
+              </div>
+            ))}
+            {Object.keys(tally).length === 0 && <p className="muted empty-hint">No missions were recorded this month.</p>}
+          </div>
+          <ul className="month-history-missions">
+            {viewingMissions.map((m) => (
+              <li key={m.id} className="month-history-mission-row">
+                <span>{m.assigneeIds.length ? m.assigneeIds.map(nameOf).join(" & ") : "Unassigned"}</span>
+                <span className="muted">{m.occasion}</span>
+                <Badge tone={m.status === "completed" ? "good" : "default"}>{m.status}</Badge>
+              </li>
+            ))}
+          </ul>
+          <button className="btn btn-ghost btn-sm" onClick={() => onExport(viewing.month, viewing.label)}>
+            <Download size={14} /> Export CSV
+          </button>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
 function TeamTab({
-  data, clothingStock, onRemoveMember, onExport, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority,
+  data, allMissions, monthHistory, clothingStock, onRemoveMember, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority,
   onAddOccasion, onRemoveOccasion, generatePreview, onPreviewGenerate, onConfirmGenerate, onCancelGenerate,
   addMember, onUpdateClothingStock, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
 }) {
@@ -1829,27 +1981,33 @@ function TeamTab({
   const [newName, setNewName] = useState("");
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeConfirmText, setRemoveConfirmText] = useState("");
+  const [startingMonth, setStartingMonth] = useState(false);
 
   return (
     <div className="tab-content">
       <section className="card" id="tour-planning-header">
         <div className="card-head">
           <h2>Planning header</h2>
-          {editingMeta ? (
-            <IconBtn
-              title="Save"
-              onClick={() => {
-                onUpdateMeta("monthLabel", monthLabel);
-                onUpdateMeta("windowNote", windowNote);
-                onUpdateMeta("deadlines", { missionsDue: missionsDue || null, editsDue: editsDue || null });
-                setEditingMeta(false);
-              }}
-            >
-              <Save size={15} />
-            </IconBtn>
-          ) : (
-            <IconBtn title="Edit" onClick={() => setEditingMeta(true)}><Pencil size={15} /></IconBtn>
-          )}
+          <div className="card-head-actions">
+            <button className="btn btn-ghost btn-sm" onClick={() => setStartingMonth(true)}>
+              <CalendarPlus size={14} /> Start new month
+            </button>
+            {editingMeta ? (
+              <IconBtn
+                title="Save"
+                onClick={() => {
+                  onUpdateMeta("monthLabel", monthLabel);
+                  onUpdateMeta("windowNote", windowNote);
+                  onUpdateMeta("deadlines", { missionsDue: missionsDue || null, editsDue: editsDue || null });
+                  setEditingMeta(false);
+                }}
+              >
+                <Save size={15} />
+              </IconBtn>
+            ) : (
+              <IconBtn title="Edit" onClick={() => setEditingMeta(true)}><Pencil size={15} /></IconBtn>
+            )}
+          </div>
         </div>
         {editingMeta ? (
           <div className="meta-edit">
@@ -1871,6 +2029,16 @@ function TeamTab({
           </>
         )}
       </section>
+
+      {startingMonth && (
+        <StartNewMonthModal
+          currentLabel={data.monthLabel}
+          missionCount={data.missions.length}
+          currentMonthKey={data.month}
+          onCancel={() => setStartingMonth(false)}
+          onConfirm={(key, label) => { onStartNewMonth(key, label); setStartingMonth(false); }}
+        />
+      )}
 
       <OccasionsEditor occasions={data.occasions} missions={data.missions} onAdd={onAddOccasion} onRemove={onRemoveOccasion} />
 
@@ -1919,6 +2087,8 @@ function TeamTab({
         onAddMission={onAddMission}
         onToggleMissionDone={onToggleMissionDone}
       />
+
+      <MonthHistoryCard monthHistory={monthHistory} allMissions={allMissions} roster={data.roster} onExport={onExport} />
 
       <section className="card" id="tour-clothing-stock">
         <div className="card-head"><h2>Clothing stock</h2></div>
@@ -2569,6 +2739,7 @@ function PortalStyles() {
         display: flex; align-items: center; justify-content: space-between;
         margin-bottom: 16px;
       }
+      .card-head-actions { display: flex; align-items: center; gap: 8px; }
       .card-head h2 {
         font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         font-size: 15.5px;
@@ -2577,6 +2748,7 @@ function PortalStyles() {
         display: flex; align-items: center; gap: 7px;
       }
       .muted { color: var(--ink-soft); font-size: 13.5px; }
+      .start-month-list { margin: 0; padding-left: 18px; color: var(--ink-soft); font-size: 13.5px; display: flex; flex-direction: column; gap: 6px; }
       .empty-hint { margin: 4px 0 12px; }
 
       .badge {
@@ -2652,8 +2824,22 @@ function PortalStyles() {
       .quota-table-head { font-size: 11px; color: var(--ink-soft); padding: 0 2px 4px; }
       .quota-table-row { padding: 5px 2px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
       .quota-table-4col .quota-table-head, .quota-table-4col .quota-table-row { grid-template-columns: 1fr 64px 64px 64px; }
+      .quota-table-2col .quota-table-head, .quota-table-2col .quota-table-row { grid-template-columns: 1fr 84px; }
       .quota-table-row-readonly { color: var(--ink-soft); }
       .quota-table-row-readonly span:first-child { color: var(--ink); }
+      .month-history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+      .month-history-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 13.5px;
+      }
+      .month-history-row:last-child { border-bottom: none; }
+      .month-history-label { font-weight: 600; flex: 1; }
+      .month-history-missions { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+      .month-history-mission-row {
+        display: flex; align-items: center; gap: 10px; padding: 6px 2px;
+        border-bottom: 1px solid var(--line); font-size: 13px;
+      }
+      .month-history-mission-row > span:first-child { flex: 1; font-weight: 600; }
 
       .plan-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
       .plan-filter-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft); }
