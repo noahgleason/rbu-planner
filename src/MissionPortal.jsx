@@ -3,7 +3,7 @@ import {
   Truck, Package, ShieldCheck, ShieldOff, CheckCircle2, Circle, Plus, Trash2,
   Lock, Unlock, Download, X, Users, ClipboardList, Shirt, Refrigerator,
   ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
-  LayoutDashboard, CalendarPlus, History,
+  LayoutDashboard, CalendarPlus, History, Megaphone, UserPlus, UserMinus,
 } from "lucide-react";
 import storage, {
   hasHostStorage, getStoredPasscode, setStoredPasscode, clearStoredPasscode,
@@ -391,6 +391,12 @@ const ADMIN_TOUR_STEPS = [
     setup: (ctx) => ctx.setTab("team"),
     title: "Missions",
     body: "Every mission, editable inline — person, occasion, directive from the BMS, partner, date, location, and done status. Filter by occasion, status, or unassigned-only to work through the month in one sitting.",
+  },
+  {
+    target: "#tour-opportunities-card",
+    setup: (ctx) => ctx.setTab("team"),
+    title: "Volunteer opportunities",
+    body: "Post an RB-hosted event here and it shows up on everyone's dashboard with a sign-up button — separate from the monthly plan, so it doesn't get swept up by generate or a new month. You can also log a volunteer here yourself if someone tells you in person or by text.",
   },
   {
     target: "#tour-roster-manage-card",
@@ -1117,6 +1123,31 @@ export default function MissionPortal() {
     commit({ ...data, clothingStock: { ...(data.clothingStock || {}), [size]: value } });
   }
 
+  // ---- volunteer opportunities (scoped to the active team) ----
+  // One-off RB-hosted events the branch manager needs SMs to volunteer for —
+  // separate from the monthly mission plan (not month-scoped, not part of
+  // the can quota), since these come up ad hoc and outlast any one month.
+  function addOpportunity(title, details, date, location) {
+    commitTeam((t) => ({
+      volunteerOpportunities: [...(t.volunteerOpportunities || []), {
+        id: uid("op"), title, details: details || "", date: date || "", location: location || "",
+        createdAt: new Date().toISOString(), createdBy: currentActorName(), volunteerIds: [],
+      }],
+    }));
+  }
+
+  function removeOpportunity(oppId) {
+    commitTeam((t) => ({ volunteerOpportunities: (t.volunteerOpportunities || []).filter((o) => o.id !== oppId) }));
+  }
+
+  function toggleVolunteer(oppId, personId) {
+    commitTeam((t) => ({
+      volunteerOpportunities: (t.volunteerOpportunities || []).map((o) => (o.id === oppId
+        ? { ...o, volunteerIds: o.volunteerIds.includes(personId) ? o.volunteerIds.filter((id) => id !== personId) : [...o.volunteerIds, personId] }
+        : o)),
+    }));
+  }
+
   function exportCsv(month = activeTeam.month, label = activeTeam.monthLabel) {
     const nameOf = (id) => activeTeam.roster.find((r) => r.id === id)?.name || "Unassigned";
     const rows = [["Person", "Partner", "Occasion", "Directive", "Date", "Location", "Status"]];
@@ -1260,6 +1291,7 @@ export default function MissionPortal() {
               missionContacts={data.missionContacts || []}
               isPastMissionsDue={isPastMissionsDue}
               onSelectPerson={(id) => { setViewId(id); setTab("missions"); }}
+              onToggleVolunteer={(oppId) => (myId ? toggleVolunteer(oppId, myId) : setShowIdentityPicker(true))}
             />
           )}
 
@@ -1327,6 +1359,9 @@ export default function MissionPortal() {
               onRemoveMission={removeMission}
               onToggleMissionDone={toggleMissionDone}
               isPastMissionsDue={isPastMissionsDue}
+              onAddOpportunity={addOpportunity}
+              onRemoveOpportunity={removeOpportunity}
+              onToggleVolunteer={toggleVolunteer}
             />
           )}
         </main>
@@ -1468,8 +1503,10 @@ function AddMemberInline({ onAdd }) {
   );
 }
 
-function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson }) {
+function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson, onToggleVolunteer }) {
   const roster = data.roster;
+  const opportunities = data.volunteerOpportunities || [];
+  const nameOf = (id) => roster.find((r) => r.id === id)?.name || "Someone";
   const totalAssigned = data.missions.length;
   const totalDone = data.missions.filter((m) => m.status === "completed").length;
   const stillPlaced = placedAssets.filter((a) => a.status === "placed").length;
@@ -1510,6 +1547,40 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
           </div>
         ))}
       </section>
+
+      {opportunities.length > 0 && (
+        <section className="card">
+          <div className="card-head"><h2><Megaphone size={16} /> Volunteer opportunities</h2><Badge>{opportunities.length}</Badge></div>
+          <p className="muted empty-hint">RB-hosted events your branch manager needs people for — still paid, just opt-in. Sign up below (they'll likely also text around).</p>
+          <ul className="opportunity-list">
+            {opportunities.map((o) => {
+              const inIt = myId && o.volunteerIds.includes(myId);
+              return (
+                <li key={o.id} className="opportunity-row">
+                  <div className="opportunity-text">
+                    <span className="opportunity-title">{o.title}</span>
+                    {o.details && <span className="opportunity-details">{o.details}</span>}
+                    {(o.date || o.location) && (
+                      <span className="mission-secondary">{o.date}{o.date && o.location && " · "}{o.location}</span>
+                    )}
+                    <span className="muted opportunity-volunteers">
+                      {o.volunteerIds.length === 0
+                        ? "No one's signed up yet"
+                        : `${o.volunteerIds.length} in: ${o.volunteerIds.map(nameOf).join(", ")}`}
+                    </span>
+                  </div>
+                  <button
+                    className={`btn btn-sm ${inIt ? "btn-ghost" : "btn-primary"}`}
+                    onClick={() => onToggleVolunteer(o.id)}
+                  >
+                    {inIt ? <><UserMinus size={13} /> Withdraw</> : <><UserPlus size={13} /> Volunteer</>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       <section className="card">
         <div className="card-head"><h2><Users size={16} /> Team progress</h2></div>
@@ -1877,6 +1948,87 @@ function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem, 
 // Confirmation modal for rolling into a new month — spells out exactly what
 // moves to read-only history vs. what resets vs. what carries over, so
 // there's no ambiguity about what clicking "Start month" is about to do.
+// Admin-side management for RB-hosted volunteer opportunities — posting one
+// here is what makes it show up on everyone's Dashboard with a sign-up
+// button. Also lets admin log a volunteer directly (e.g. someone who texted
+// in instead of using the app) without needing that person to sign in.
+function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVolunteer }) {
+  const [title, setTitle] = useState("");
+  const [details, setDetails] = useState("");
+  const [date, setDate] = useState("");
+  const [location, setLocation] = useState("");
+  const [addPerson, setAddPerson] = useState({});
+
+  function submit() {
+    if (!title.trim()) return;
+    onAdd(title.trim(), details.trim(), date, location.trim());
+    setTitle(""); setDetails(""); setDate(""); setLocation("");
+  }
+
+  return (
+    <section className="card" id="tour-opportunities-card">
+      <div className="card-head"><h2><Megaphone size={16} /> Volunteer opportunities</h2><Badge>{opportunities.length}</Badge></div>
+      <p className="muted empty-hint">
+        RB-hosted events you need SMs to volunteer for — post one and it shows up on everyone's dashboard with a
+        sign-up button. Handy alongside texting people directly, since either way it lands in one shared list.
+      </p>
+
+      <div className="gen-inputs" style={{ marginBottom: 12 }}>
+        <input className="text-input" placeholder="Event title" value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input className="text-input" placeholder="Details (optional)" value={details} onChange={(e) => setDetails(e.target.value)} />
+        <input className="text-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <input className="text-input" placeholder="Location (optional)" value={location} onChange={(e) => setLocation(e.target.value)} />
+      </div>
+      <button className="btn btn-primary btn-sm" disabled={!title.trim()} onClick={submit}>
+        <Plus size={14} /> Post opportunity
+      </button>
+
+      {opportunities.length > 0 && (
+        <ul className="opportunity-list" style={{ marginTop: 16 }}>
+          {opportunities.map((o) => (
+            <li key={o.id} className="opportunity-row">
+              <div className="opportunity-text">
+                <span className="opportunity-title">{o.title}</span>
+                {o.details && <span className="opportunity-details">{o.details}</span>}
+                {(o.date || o.location) && (
+                  <span className="mission-secondary">{o.date}{o.date && o.location && " · "}{o.location}</span>
+                )}
+                <div className="opportunity-chips">
+                  {o.volunteerIds.length === 0 && <span className="muted" style={{ fontSize: 12.5 }}>No one signed up yet</span>}
+                  {o.volunteerIds.map((pid) => (
+                    <span key={pid} className="opportunity-chip">
+                      {roster.find((r) => r.id === pid)?.name || "Someone"}
+                      <button title="Remove" onClick={() => onToggleVolunteer(o.id, pid)}><X size={11} /></button>
+                    </span>
+                  ))}
+                </div>
+                <div className="add-row" style={{ marginTop: 8 }}>
+                  <select
+                    className="text-input select-input select-input-sm"
+                    value={addPerson[o.id] || ""}
+                    onChange={(e) => setAddPerson({ ...addPerson, [o.id]: e.target.value })}
+                  >
+                    <option value="">Log a volunteer…</option>
+                    {roster.filter((r) => !o.volunteerIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    disabled={!addPerson[o.id]}
+                    onClick={() => { onToggleVolunteer(o.id, addPerson[o.id]); setAddPerson({ ...addPerson, [o.id]: "" }); }}
+                  >
+                    <UserPlus size={13} /> Add
+                  </button>
+                </div>
+              </div>
+              <IconBtn danger title="Remove opportunity" onClick={() => onRemove(o.id)}><Trash2 size={14} /></IconBtn>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function StartNewMonthModal({ currentLabel, missionCount, currentMonthKey, onCancel, onConfirm }) {
   const suggested = nextMonthKeyAndLabel(currentMonthKey);
   const [label, setLabel] = useState(suggested.label);
@@ -1976,6 +2128,7 @@ function TeamTab({
   data, allMissions, monthHistory, clothingStock, onRemoveMember, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority,
   onAddOccasion, onRemoveOccasion, generatePreview, onPreviewGenerate, onConfirmGenerate, onCancelGenerate,
   addMember, onUpdateClothingStock, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
+  onAddOpportunity, onRemoveOpportunity, onToggleVolunteer,
 }) {
   const [editingMeta, setEditingMeta] = useState(false);
   const [monthLabel, setMonthLabel] = useState(data.monthLabel);
@@ -2088,6 +2241,14 @@ function TeamTab({
       />
 
       <MonthHistoryCard monthHistory={monthHistory} allMissions={allMissions} roster={data.roster} onExport={onExport} />
+
+      <OpportunitiesCard
+        opportunities={data.volunteerOpportunities || []}
+        roster={data.roster}
+        onAdd={onAddOpportunity}
+        onRemove={onRemoveOpportunity}
+        onToggleVolunteer={onToggleVolunteer}
+      />
 
       <section className="card" id="tour-clothing-stock">
         <div className="card-head"><h2>Clothing stock</h2></div>
@@ -2839,6 +3000,28 @@ function PortalStyles() {
         border-bottom: 1px solid var(--line); font-size: 13px;
       }
       .month-history-mission-row > span:first-child { flex: 1; font-weight: 600; }
+      .opportunity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+      .opportunity-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 14px;
+        padding: 12px 2px; border-bottom: 1px solid var(--line);
+      }
+      .opportunity-row:last-child { border-bottom: none; }
+      .opportunity-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .opportunity-title { font-weight: 700; font-size: 14px; }
+      .opportunity-details { font-size: 12.5px; color: var(--ink-soft); }
+      .opportunity-volunteers { margin-top: 2px; }
+      .opportunity-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+      .opportunity-chip {
+        display: inline-flex; align-items: center; gap: 5px;
+        background: rgba(0,15,30,0.06); border-radius: 999px;
+        padding: 3px 6px 3px 10px; font-size: 12px; font-weight: 600;
+      }
+      .opportunity-chip button {
+        display: flex; align-items: center; justify-content: center;
+        width: 16px; height: 16px; border-radius: 50%; border: none;
+        background: transparent; color: var(--ink-soft); cursor: pointer; padding: 0;
+      }
+      .opportunity-chip button:hover { background: rgba(0,0,0,0.08); color: var(--ink); }
 
       .plan-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
       .plan-filter-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft); }
