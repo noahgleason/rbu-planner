@@ -4,7 +4,7 @@ import { Building2, Plus, CheckCircle2 } from "lucide-react";
 // Proof-of-concept persistence only: plain localStorage, a key of its own,
 // completely separate from the planner's shared storage (src/storage.js)
 // and v5 schema. Nothing here is wired to the real teams/roster data yet —
-// that integration is future work once real branch-manager auth exists.
+// that integration is future work once real FMS auth exists.
 const STORAGE_KEY = "site-branch-setup";
 
 function loadSaved() {

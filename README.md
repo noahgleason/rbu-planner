@@ -27,8 +27,8 @@ or endorsed by any employer or brand.
   same person isn't stuck getting every month's "leftover" slot and no one's
   shut out of (or hoarding) a category.
 - **Per-person view:** each team member sees only their own assigned
-  missions, checks them off, and fills in the location/detail themselves
-  once they've picked one.
+  missions — with any location the FMS suggested — and checks them off;
+  seeding missions also take a self-reported cans-placed count.
 - **Dashboard:** click the "Mission Manifest" logo to land on a team-wide
   overview — overall mission progress, quotas, everyone's completion, and
   shared-log stats — a neutral home base that isn't any one person's view.
@@ -42,8 +42,9 @@ or endorsed by any employer or brand.
   possession and other personal gear; admins track clothing stock on hand
   by size separately.
 - **Admin tools:** edit quotas directly (spreadsheet-style), add/remove team
-  members, set priority levels, export the current mission list to CSV, and
-  rename the current planning period inline from the top bar.
+  members, set priority levels, export the current mission list to CSV,
+  post volunteer opportunities, and roll into a new month (past months stay
+  as read-only history).
 - **Guided tutorial:** a spotlight-style walkthrough launches automatically
   on first login (adapts to whether you're in admin mode) and can be
   replayed anytime from "Tutorial mode" in the footer.
@@ -117,7 +118,7 @@ deleted, so it remains available as a rollback.
 `src/site/*` is a separate app tree: its own styles, its own localStorage
 key, no shared code with the planner. It has the public landing page, stub
 sign-in screens for the FMS (Field Marketing Specialist) and student marketeers (no real auth
-yet — they just continue through), and a branch-setup wizard where a manager
+yet — they just continue through), and a branch-setup wizard where an FMS
 names their branch and the teams they oversee. `main.jsx` mounts the planner
 only at `/plan`; every other path, including the bare `/`, gets the site app
 (which defaults to the landing page). `public/_redirects` makes Netlify
@@ -158,7 +159,7 @@ above — see "Setting up Netlify Blobs" in the Data & storage section.
 This is intentionally a working pilot, not a finished product. If it proves
 useful for a real team, the honest next steps are:
 
-1. **Real authentication** — per-branch-manager and per-marketeer accounts
+1. **Real authentication** — per-FMS and per-marketeer accounts
    (the `/site` login screens are the placeholder for this), ideally tied
    into an organization's existing identity provider rather than the single
    shared passcode that gates the storage function today.
