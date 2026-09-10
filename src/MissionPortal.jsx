@@ -741,9 +741,7 @@ export default function MissionPortal() {
   const [tab, setTab] = useState("missions");
   const [adminMode, setAdminMode] = useState(false);
   const [showIdentityPicker, setShowIdentityPicker] = useState(false);
-  const [editingMonth, setEditingMonth] = useState(false);
   const [generatePreview, setGeneratePreview] = useState(null);
-  const [monthDraft, setMonthDraft] = useState("");
   const [tourActive, setTourActive] = useState(false);
   const [tourSteps, setTourSteps] = useState([]);
   const [tourStep, setTourStep] = useState(0);
@@ -866,11 +864,6 @@ export default function MissionPortal() {
   function closeTour() {
     setTourActive(false);
     storage.set("tutorial-seen", "1", false).catch(() => {});
-  }
-
-  function saveMonthLabel() {
-    if (monthDraft.trim()) commitTeam({ monthLabel: monthDraft.trim() });
-    setEditingMonth(false);
   }
 
   const commit = useCallback((next) => {
@@ -1213,32 +1206,7 @@ export default function MissionPortal() {
           <Truck size={20} strokeWidth={2.2} />
           <div>
             <div className="brand-title">Mission Manifest</div>
-            {adminMode && editingMonth ? (
-              <input
-                className="text-input month-edit-input"
-                autoFocus
-                value={monthDraft}
-                onChange={(e) => setMonthDraft(e.target.value)}
-                onBlur={saveMonthLabel}
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveMonthLabel();
-                  if (e.key === "Escape") setEditingMonth(false);
-                }}
-              />
-            ) : (
-              <div
-                id="tour-month-label"
-                className={`brand-sub ${adminMode ? "brand-sub-editable" : ""}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (adminMode) { setMonthDraft(activeTeam.monthLabel); setEditingMonth(true); }
-                }}
-              >
-                {activeTeam.monthLabel}
-                {adminMode && <Pencil size={11} />}
-              </div>
-            )}
+            <div id="tour-month-label" className="brand-sub">{activeTeam.monthLabel}</div>
           </div>
         </div>
         <select
@@ -1534,7 +1502,10 @@ function AddMemberInline({ onAdd }) {
 
 function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson, onToggleVolunteer }) {
   const roster = data.roster;
-  const opportunities = data.volunteerOpportunities || [];
+  // Past-dated events drop off here automatically (they stay on the admin
+  // card, flagged, until someone deletes them). Undated ones never expire.
+  const today = new Date().toISOString().slice(0, 10);
+  const opportunities = (data.volunteerOpportunities || []).filter((o) => !o.date || o.date >= today);
   const nameOf = (id) => roster.find((r) => r.id === id)?.name || "Someone";
   const totalAssigned = data.missions.length;
   const totalDone = data.missions.filter((m) => m.status === "completed").length;
@@ -1987,6 +1958,7 @@ function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVol
   const [date, setDate] = useState("");
   const [location, setLocation] = useState("");
   const [addPerson, setAddPerson] = useState({});
+  const today = new Date().toISOString().slice(0, 10);
 
   function submit() {
     if (!title.trim()) return;
@@ -2017,7 +1989,10 @@ function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVol
           {opportunities.map((o) => (
             <li key={o.id} className="opportunity-row">
               <div className="opportunity-text">
-                <span className="opportunity-title">{o.title}</span>
+                <span className="opportunity-title">
+                  {o.title}
+                  {o.date && o.date < today && <Badge>Past — no longer shown to the team</Badge>}
+                </span>
                 {o.details && <span className="opportunity-details">{o.details}</span>}
                 {(o.date || o.location) && (
                   <span className="mission-secondary">{o.date}{o.date && o.location && " · "}{o.location}</span>
@@ -2070,7 +2045,7 @@ function StartNewMonthModal({ currentLabel, missionCount, currentKey, onCancel, 
       <ul className="start-month-list">
         <li>{missionCount} mission{missionCount === 1 ? "" : "s"} from {currentLabel} move to read-only history — nothing is deleted, and they stay exportable.</li>
         <li>The monthly can goal and both deadline dates reset to blank, so you enter this month's real numbers.</li>
-        <li>Occasion splits, roster, priorities, and clothing stock carry over unchanged.</li>
+        <li>Occasion splits, favorites, roster, priorities, and clothing stock carry over — splits stay editable in the generator whenever the mix changes.</li>
       </ul>
       <label className="gen-field" style={{ marginTop: 4 }}>
         <span>New month label</span>
@@ -3201,9 +3176,6 @@ function PortalStyles() {
       .dashboard-stat-num { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 700; }
       .dashboard-stat-label { font-size: 12px; color: var(--ink-soft); }
 
-      .brand-sub-editable { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
-      .brand-sub-editable:hover { color: #fff; }
-      .month-edit-input { margin-top: 2px; padding: 3px 8px; font-size: 12px; width: 180px; }
 
       .tour-clickblock { position: fixed; inset: 0; z-index: 9997; }
       .tour-spotlight {

@@ -120,10 +120,10 @@ export default function Landing() {
             mission plan — generated as a draft, hand-tuned with real directives, and tracked by every team you oversee.
           </p>
           <div className="site-hero-actions">
-            <a className="site-btn site-btn-primary site-btn-lg" href="/site/branch-setup">
-              Set up your branch <ArrowRight size={15} />
+            <a className="site-btn site-btn-primary site-btn-lg" href="/site/login/sm">
+              SM Login <ArrowRight size={15} />
             </a>
-            <a className="site-btn site-btn-outline site-btn-lg" href="#how-it-works">See how it works</a>
+            <a className="site-btn site-btn-outline site-btn-lg" href="/site/branch-setup">Branch manager? Set up your branch</a>
           </div>
           <ul className="site-hero-proof">
             <li><ShieldCheck size={14} /> Passcode-gated, shared storage</li>
