@@ -107,7 +107,7 @@ export default function Landing() {
         </nav>
         <div className="site-nav-actions">
           <a className="site-btn site-btn-outline" href="/site/login/sm">SM Login</a>
-          <a className="site-btn site-btn-primary" href="/site/login/manager">Branch Manager Login</a>
+          <a className="site-btn site-btn-primary" href="/site/login/manager">FMS Login</a>
         </div>
       </header>
 
@@ -116,19 +116,19 @@ export default function Landing() {
           <span className="site-badge">Multi-branch preview</span>
           <h1>The monthly plan, without the spreadsheet.</h1>
           <p>
-            Mission Manifest turns a branch manager's monthly product allotment into a shared, self-service
+            Mission Manifest turns a Field Marketing Specialist's (FMS) monthly product allotment into a shared, self-service
             mission plan — generated as a draft, hand-tuned with real directives, and tracked by every team you oversee.
           </p>
           <div className="site-hero-actions">
             <a className="site-btn site-btn-primary site-btn-lg" href="/site/login/sm">
               SM Login <ArrowRight size={15} />
             </a>
-            <a className="site-btn site-btn-outline site-btn-lg" href="/site/branch-setup">Branch manager? Set up your branch</a>
+            <a className="site-btn site-btn-outline site-btn-lg" href="/site/branch-setup">FMS? Set up your branch</a>
           </div>
           <ul className="site-hero-proof">
             <li><ShieldCheck size={14} /> Passcode-gated, shared storage</li>
             <li><CalendarDays size={14} /> Deadline-aware</li>
-            <li><Users2 size={14} /> One manager, many teams</li>
+            <li><Users2 size={14} /> One FMS, many teams</li>
           </ul>
         </div>
         <div className="site-hero-media">
@@ -158,7 +158,7 @@ export default function Landing() {
           <li>
             <span className="site-step-num">4</span>
             <h3>The team runs it</h3>
-            <p>Each marketeer sees only their missions — with any location the manager suggested — and checks them off as they go.</p>
+            <p>Each marketeer sees only their missions — with any location the FMS suggested — and checks them off as they go.</p>
           </li>
         </ol>
       </section>
@@ -168,14 +168,14 @@ export default function Landing() {
           <span className="site-badge">For student marketeers</span>
           <h2>Everyone sees their part — and only their part.</h2>
           <p className="site-split-text">
-            No hunting through a shared sheet. Your missions, the manager's directive for each one, your partner,
+            No hunting through a shared sheet. Your missions, the FMS's directive for each one, your partner,
             your date, and any location they've suggested. Gear, placements, and volunteer sign-ups live right next to it.
           </p>
           <div className="site-feature-grid site-feature-grid-2">
             <div className="site-feature-card">
               <div className="site-feature-icon"><LayoutGrid size={18} /></div>
               <h3>One branch, many teams</h3>
-              <p>A manager isn't tied to a single roster — every team they oversee, each with its own plan and can goal.</p>
+              <p>An FMS isn't tied to a single roster — every team they oversee, each with its own plan and can goal.</p>
             </div>
             <div className="site-feature-card">
               <div className="site-feature-icon"><ClipboardCheck size={18} /></div>
@@ -201,7 +201,7 @@ export default function Landing() {
       <footer className="site-footer">
         <div className="site-footer-links">
           <a href="/site/branch-setup">Branch setup</a>
-          <a href="/site/login/manager">Branch Manager Login</a>
+          <a href="/site/login/manager">FMS Login</a>
           <a href="/site/login/sm">SM Login</a>
           <a href="/plan">Planner</a>
         </div>

@@ -321,7 +321,7 @@ const TOUR_STEPS_BASE = [
     target: "#tour-missions-card",
     setup: (ctx) => ctx.setTab("missions"),
     title: "Your missions",
-    body: "Check missions off as you complete them. Your team lead may suggest a location for some — that shows up here too.",
+    body: "Check missions off as you complete them. Your FMS may suggest a location for some — that shows up here too.",
   },
   {
     target: "#tour-nav",
@@ -335,7 +335,7 @@ const TOUR_STEPS_BASE = [
 const TOUR_STEPS_ADMIN_HINT = [
   {
     target: "#tour-admin-toggle",
-    title: "Team leads: admin mode",
+    title: "FMS: admin mode",
     body: "If you manage the team, unlock admin mode here to generate the monthly plan, edit quotas, and manage the roster.",
   },
 ];
@@ -412,7 +412,7 @@ const ADMIN_TOUR_STEPS = [
     target: "#tour-plan-table-card",
     setup: (ctx) => ctx.setTab("team"),
     title: "Missions",
-    body: "Every mission, editable inline — person, occasion, directive from the BMS, partner, date, location, and done status. Filter by occasion, status, or unassigned-only to work through the month in one sitting.",
+    body: "Every mission, editable inline — person, occasion, directive from the FMS, partner, date, location, and done status. Filter by occasion, status, or unassigned-only to work through the month in one sitting.",
   },
   {
     target: "#tour-opportunities-card",
@@ -1141,7 +1141,7 @@ export default function MissionPortal() {
   }
 
   // ---- volunteer opportunities (scoped to the active team) ----
-  // One-off RB-hosted events the branch manager needs SMs to volunteer for —
+  // One-off RB-hosted events the FMS needs SMs to volunteer for —
   // separate from the monthly mission plan (not month-scoped, not part of
   // the can quota), since these come up ad hoc and outlast any one month.
   function addOpportunity(title, details, date, location) {
@@ -1551,7 +1551,7 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
       {opportunities.length > 0 && (
         <section className="card">
           <div className="card-head"><h2><Megaphone size={16} /> Volunteer opportunities</h2><Badge>{opportunities.length}</Badge></div>
-          <p className="muted empty-hint">RB-hosted events your branch manager needs people for — still paid, just opt-in. Sign up below (they'll likely also text around).</p>
+          <p className="muted empty-hint">RB-hosted events your FMS (Field Marketing Specialist) needs people for — still paid, just opt-in. Sign up below (they'll likely also text around).</p>
           <ul className="opportunity-list">
             {opportunities.map((o) => {
               const inIt = myId && o.volunteerIds.includes(myId);
@@ -1730,7 +1730,7 @@ function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpd
             </select>
             <input
               className="text-input"
-              placeholder="Directive (event, note from the BMS)"
+              placeholder="Directive (event, note from the FMS)"
               value={newDirective}
               onChange={(e) => setNewDirective(e.target.value)}
               onKeyDown={(e) => {

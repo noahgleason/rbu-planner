@@ -116,7 +116,7 @@ deleted, so it remains available as a rollback.
 
 `src/site/*` is a separate app tree: its own styles, its own localStorage
 key, no shared code with the planner. It has the public landing page, stub
-sign-in screens for branch managers and student marketeers (no real auth
+sign-in screens for the FMS (Field Marketing Specialist) and student marketeers (no real auth
 yet — they just continue through), and a branch-setup wizard where a manager
 names their branch and the teams they oversee. `main.jsx` mounts the planner
 only at `/plan`; every other path, including the bare `/`, gets the site app

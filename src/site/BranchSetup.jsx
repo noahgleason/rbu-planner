@@ -78,7 +78,7 @@ export default function BranchSetup() {
     <div className="site-card-page" style={{ maxWidth: 560 }}>
       <div className="site-feature-icon" style={{ marginBottom: 14 }}><Building2 size={18} /></div>
       <h1>Set up your branch</h1>
-      <p className="site-muted">Every branch manager sets up their own branch — a manager isn't tied to just one team.</p>
+      <p className="site-muted">Every FMS (Field Marketing Specialist) sets up their own branch — an FMS isn't tied to just one team.</p>
       <div className="site-poc-note">Proof of concept — no login yet, and this doesn't touch your real planner data.</div>
 
       <label className="site-field">
