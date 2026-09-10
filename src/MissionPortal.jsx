@@ -267,13 +267,28 @@ function migrateTeamShape(team) {
 // past month (see MonthHistory) to tally a closed month instead; in that
 // case `planned` isn't meaningful (today's splits/goal don't describe a past
 // month) so callers viewing history should ignore it and use `assigned`.
+//
+// Two different "remaining" numbers come out of this on purpose, for two
+// different audiences: `remaining` (planned minus missions that exist yet,
+// any status but cancelled) is the admin's "have I generated enough
+// missions" gauge on the Team tab's Mission quotas table. `remainingToDo`
+// (planned minus missions actually completed) is what the dashboard/missions
+// quota strip shows everyone else — checking a mission off is the only
+// thing that should move that number, since that's the one people watch
+// day to day.
 function computeQuotaSummary(team, month = team.month) {
   const totalMissions = Math.max(0, Math.round((team.planningConfig?.totalCases || 0) / (team.planningConfig?.casesPerMission || 1)));
   return (team.occasions || []).map((occasion) => {
     const pct = team.planningConfig?.splits?.[occasion] || 0;
     const planned = Math.round(totalMissions * (pct / 100));
-    const assigned = team.missions.filter((m) => m.occasion === occasion && m.status !== "cancelled" && m.month === month).length;
-    return { occasion, planned, assigned, remaining: Math.max(0, planned - assigned) };
+    const matches = team.missions.filter((m) => m.occasion === occasion && m.status !== "cancelled" && m.month === month);
+    const assigned = matches.length;
+    const completed = matches.filter((m) => m.status === "completed").length;
+    return {
+      occasion, planned, assigned, completed,
+      remaining: Math.max(0, planned - assigned),
+      remainingToDo: Math.max(0, planned - completed),
+    };
   });
 }
 
@@ -1543,7 +1558,7 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
         {quotaSummary.map((q) => (
           <div key={q.occasion} className="quota-chip">
             <span className="quota-cat">{q.occasion}</span>
-            <span className="quota-num">{q.remaining}<span className="quota-of">/{q.planned}</span></span>
+            <span className="quota-num">{q.remainingToDo}<span className="quota-of">/{q.planned}</span></span>
           </div>
         ))}
       </section>
@@ -1651,7 +1666,7 @@ function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpd
         {quotaSummary.map((q) => (
           <div key={q.occasion} className="quota-chip">
             <span className="quota-cat">{q.occasion}</span>
-            <span className="quota-num">{q.remaining}<span className="quota-of">/{q.planned}</span></span>
+            <span className="quota-num">{q.remainingToDo}<span className="quota-of">/{q.planned}</span></span>
           </div>
         ))}
       </section>
