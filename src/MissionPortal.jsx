@@ -283,6 +283,45 @@ function migrateTeamShape(team) {
 // quota strip shows everyone else — checking a mission off is the only
 // thing that should move that number, since that's the one people watch
 // day to day.
+// ---------- Yearly can goal (branch-level, reported by Hunter after each
+// month closes — mirrors the "Yearly Can Goals" tab on the source
+// spreadsheet, where Goal is set per month up front and Actual is filled
+// in once real numbers come back). Not derived from missions at all; this
+// is a separate manual scoreboard against the annual corporate target.
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function emptyYearlyCanGoals(year = new Date().getFullYear()) {
+  return { year, months: MONTH_LABELS.map(() => ({ goal: 0, actual: null })) };
+}
+
+// Pace is judged only against months Hunter has actually reported (`actual`
+// set) — comparing to the full annual goal would read "behind" all year
+// even when perfectly on track, and comparing to today's calendar date
+// would break if reporting lags. `pct` (for the bar's fill) is still against
+// the full-year goal, since that's the real finish line.
+function computeYearlyCanProgress(yearlyCanGoals) {
+  const months = yearlyCanGoals?.months || [];
+  const totalGoal = months.reduce((s, m) => s + (Number(m.goal) || 0), 0);
+  let actualToDate = 0;
+  let goalToDate = 0;
+  let reportedMonths = 0;
+  months.forEach((m) => {
+    if (m.actual !== null && m.actual !== undefined && m.actual !== "") {
+      actualToDate += Number(m.actual) || 0;
+      goalToDate += Number(m.goal) || 0;
+      reportedMonths += 1;
+    }
+  });
+  return {
+    totalGoal,
+    actualToDate,
+    goalToDate,
+    hasData: reportedMonths > 0,
+    onPace: actualToDate >= goalToDate,
+    pct: totalGoal > 0 ? Math.min(100, Math.round((actualToDate / totalGoal) * 100)) : 0,
+  };
+}
+
 function computeQuotaSummary(team, month = team.month) {
   const totalMissions = Math.max(0, Math.round((team.planningConfig?.totalCases || 0) / (team.planningConfig?.casesPerMission || 1)));
   return (team.occasions || []).map((occasion) => {
@@ -613,8 +652,13 @@ async function loadData() {
   const data = { ...raw, teams: raw.teams.map(migrateTeamShape) };
   // Persist immediately so storage doesn't lag behind what's displayed
   // until the next edit — matters both for a true rollback story and so
-  // persist()'s reference-diffing has an accurate on-disk baseline.
-  if (needsShapeUpgrade) await writeAllV5(data);
+  // persist()'s reference-diffing has an accurate on-disk baseline. Best
+  // effort: on the plain-Vite tier (no Netlify Function reachable), this
+  // write 404s — the read side already falls back to seed data on storage
+  // errors (see getJSON above), so this shouldn't take the whole app down.
+  if (needsShapeUpgrade) {
+    try { await writeAllV5(data); } catch (e) {}
+  }
   return data;
 }
 
@@ -648,20 +692,6 @@ async function persist(next, prev) {
   } catch (e) {
     return false;
   }
-}
-
-async function loadIdentity() {
-  try {
-    const res = await storage.get("my-marketeer-id", false);
-    if (res && res.value) return res.value;
-  } catch (e) {}
-  return null;
-}
-
-async function saveIdentity(id) {
-  try {
-    await storage.set("my-marketeer-id", id, false);
-  } catch (e) {}
 }
 
 // ---------- Small UI atoms ----------
@@ -738,7 +768,9 @@ export default function MissionPortal() {
   const [myId, setMyId] = useState(null);
   const [viewId, setViewId] = useState(null);
   const [activeTeamId, setActiveTeamId] = useState(null);
-  const [tab, setTab] = useState("missions");
+  // Everyone lands on the shared dashboard first, every visit — there's no
+  // remembered identity to skip straight to (see the boot effect below).
+  const [tab, setTab] = useState("dashboard");
   const [adminMode, setAdminMode] = useState(false);
   const [showIdentityPicker, setShowIdentityPicker] = useState(false);
   const [generatePreview, setGeneratePreview] = useState(null);
@@ -800,21 +832,17 @@ export default function MissionPortal() {
     }
   }
 
+  // No remembered identity anymore — every visit starts anonymous on the
+  // shared dashboard (see the `tab` default above); picking your name there
+  // (or from the roster rail / "Who are you?") is what sets `myId` for the
+  // rest of this session only.
   useEffect(() => {
     if (gateChecking || needsPasscode) return;
     (async () => {
-      const [d, id] = await Promise.all([loadData(), loadIdentity()]);
+      const d = await loadData();
       lastPersistedRef.current = d;
       setData(d);
       setActiveTeamId(d.teams[0].id);
-      const homeTeam = id && d.teams.find((t) => t.roster.find((r) => r.id === id));
-      if (homeTeam) {
-        setMyId(id);
-        setViewId(id);
-        setActiveTeamId(homeTeam.id);
-      } else {
-        setShowIdentityPicker(true);
-      }
       setLoading(false);
     })();
   }, [gateChecking, needsPasscode]);
@@ -953,7 +981,6 @@ export default function MissionPortal() {
   function pickIdentity(id) {
     setMyId(id);
     setViewId(id);
-    saveIdentity(id);
     setShowIdentityPicker(false);
   }
 
@@ -986,14 +1013,15 @@ export default function MissionPortal() {
       .map((o) => ({ ...o, volunteerIds: o.volunteerIds.filter((pid) => pid !== id) }));
     commitTeam({ roster, inventory, missions, volunteerOpportunities });
     if (viewId === id) setViewId(roster[0] ? roster[0].id : null);
-    if (myId === id) {
-      setMyId(null);
-      saveIdentity("");
-    }
+    if (myId === id) setMyId(null);
   }
 
   function updatePlanningConfig(next) {
     commitTeam({ planningConfig: next });
+  }
+
+  function updateYearlyCanGoals(next) {
+    commitTeam({ yearlyCanGoals: next });
   }
 
   // Adding an occasion extends the splits map; removing one is refused
@@ -1282,7 +1310,10 @@ export default function MissionPortal() {
               placedAssets={data.placedAssets || []}
               missionContacts={data.missionContacts || []}
               isPastMissionsDue={isPastMissionsDue}
-              onSelectPerson={(id) => { setViewId(id); setTab("missions"); }}
+              // Landing here is anonymous now (see the boot effect) —
+              // clicking your name on the dashboard is how you identify
+              // yourself for the rest of this visit, not just "view as".
+              onSelectPerson={(id) => { pickIdentity(id); setTab("missions"); }}
               onToggleVolunteer={(oppId) => (
                 // Only someone on *this* team's roster can sign up here — if
                 // you're viewing another team (or haven't said who you are),
@@ -1342,6 +1373,7 @@ export default function MissionPortal() {
               onStartNewMonth={startNewMonth}
               onUpdateMeta={(patch) => commitTeam(patch)}
               onUpdatePlanningConfig={updatePlanningConfig}
+              onUpdateYearlyCanGoals={updateYearlyCanGoals}
               onUpdatePriority={updatePriority}
               onAddOccasion={addOccasion}
               onRemoveOccasion={removeOccasion}
@@ -1519,6 +1551,7 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
   const lastChangeLabel = lastChange
     ? `Last change ${new Date(lastChange.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by ${lastChange.updatedBy}`
     : null;
+  const yearlyGoal = computeYearlyCanProgress(data.yearlyCanGoals || emptyYearlyCanGoals());
 
   return (
     <div className="tab-content">
@@ -1538,6 +1571,25 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
           </p>
         )}
       </section>
+
+      {yearlyGoal.hasData && (
+        <section className="card">
+          <div className="card-head">
+            <h2>Yearly can goal</h2>
+            <Badge tone={yearlyGoal.onPace ? "good" : "bad"}>{yearlyGoal.onPace ? "On pace" : "Behind pace"}</Badge>
+          </div>
+          <div className="yearly-goal-bar-wrap">
+            <span
+              className={`yearly-goal-bar ${yearlyGoal.onPace ? "yearly-goal-bar-good" : "yearly-goal-bar-bad"}`}
+              style={{ width: `${yearlyGoal.pct}%` }}
+            />
+          </div>
+          <p className="muted empty-hint">
+            {yearlyGoal.actualToDate.toLocaleString()} of {yearlyGoal.totalGoal.toLocaleString()} cans this year
+            ({yearlyGoal.pct}% of the annual goal) — {yearlyGoal.onPace ? "ahead of or matching" : "behind"} the {yearlyGoal.goalToDate.toLocaleString()}-can pace for the months reported so far.
+          </p>
+        </section>
+      )}
 
       <section className="quota-strip">
         {quotaSummary.map((q) => (
@@ -2134,8 +2186,64 @@ function MonthHistoryCard({ monthHistory, allMissions, roster, onExport }) {
   );
 }
 
+// Admin-only scoreboard: Hunter's real corporate goal per month (set up
+// front for the year) against what actually came in (filled in once a
+// month closes). Deliberately not wired to missions/cases at all — this is
+// reported truth, not a computed rollup.
+function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
+  const [local, setLocal] = useState(yearlyCanGoals);
+  useEffect(() => { setLocal(yearlyCanGoals); }, [yearlyCanGoals]);
+
+  function setMonthField(i, field, value) {
+    const months = local.months.map((m, idx) => (idx === i ? { ...m, [field]: value } : m));
+    const next = { ...local, months };
+    setLocal(next);
+    onUpdate(next);
+  }
+
+  const progress = computeYearlyCanProgress(local);
+
+  return (
+    <section className="card" id="tour-yearly-goal-card">
+      <div className="card-head">
+        <h2>Yearly can goal</h2>
+        <Badge tone={!progress.hasData ? "default" : progress.onPace ? "good" : "bad"}>
+          {progress.actualToDate.toLocaleString()} / {progress.totalGoal.toLocaleString()} cans
+        </Badge>
+      </div>
+      <p className="muted empty-hint">
+        Goal is the corporate target for each month; fill in Actual once real numbers come back for that month —
+        leave it blank until then. Feeds the "how we square up" bar on the dashboard.
+      </p>
+      <div className="yearly-goal-table">
+        <div className="yearly-goal-table-head">
+          <span>Month</span><span>Goal</span><span>Actual</span>
+        </div>
+        {local.months.map((m, i) => (
+          <div className="yearly-goal-table-row" key={MONTH_LABELS[i]}>
+            <span>{MONTH_LABELS[i]}</span>
+            <input
+              className="text-input"
+              type="number" min="0"
+              value={m.goal ?? 0}
+              onChange={(e) => setMonthField(i, "goal", Math.max(0, parseInt(e.target.value || "0", 10)))}
+            />
+            <input
+              className="text-input"
+              type="number" min="0"
+              placeholder="Not in yet"
+              value={m.actual ?? ""}
+              onChange={(e) => setMonthField(i, "actual", e.target.value === "" ? null : Math.max(0, parseInt(e.target.value, 10)))}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TeamTab({
-  data, allMissions, monthHistory, clothingStock, onRemoveMember, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdatePriority,
+  data, allMissions, monthHistory, clothingStock, onRemoveMember, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdateYearlyCanGoals, onUpdatePriority,
   onAddOccasion, onRemoveOccasion, generatePreview, onPreviewGenerate, onConfirmGenerate, onCancelGenerate,
   addMember, onUpdateClothingStock, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
   onAddOpportunity, onRemoveOpportunity, onToggleVolunteer,
@@ -2198,6 +2306,11 @@ function TeamTab({
           </>
         )}
       </section>
+
+      <YearlyCanGoalEditor
+        yearlyCanGoals={data.yearlyCanGoals || emptyYearlyCanGoals()}
+        onUpdate={onUpdateYearlyCanGoals}
+      />
 
       {startingMonth && (
         <StartNewMonthModal
@@ -2704,6 +2817,7 @@ function PortalStyles() {
         --success: #12873F;
         --success-soft: #E8F5ED;
         --danger: #DB0A40;
+        --danger-soft: #FBE6EC;
         --navy: #001C39;
         --card: #FFFFFF;
         font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
@@ -2943,6 +3057,7 @@ function PortalStyles() {
         color: var(--ink-soft);
       }
       .badge-good { background: var(--success-soft); color: var(--success); }
+      .badge-bad { background: var(--danger-soft); color: var(--danger); }
 
       .mission-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
       .mission-row {
@@ -3170,6 +3285,14 @@ function PortalStyles() {
       .dashboard-progress-name { flex: 0 0 170px; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
       .dashboard-progress-bar-wrap { flex: 1; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; display: block; }
       .dashboard-progress-bar { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.3s ease; }
+      .yearly-goal-bar-wrap { height: 14px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 4px 0 10px; }
+      .yearly-goal-bar { display: block; height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+      .yearly-goal-bar-good { background: var(--success); }
+      .yearly-goal-bar-bad { background: var(--danger); }
+      .yearly-goal-table { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+      .yearly-goal-table-head, .yearly-goal-table-row { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 10px; align-items: center; }
+      .yearly-goal-table-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); padding: 0 2px 4px; }
+      .yearly-goal-table-row { padding: 3px 0; }
 
       .dashboard-stats { display: flex; gap: 32px; flex-wrap: wrap; }
       .dashboard-stat { display: flex; flex-direction: column; gap: 2px; }
