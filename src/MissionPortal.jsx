@@ -162,6 +162,11 @@ const PRIORITY_LABELS = { 1: "Low", 2: "Standard", 3: "High" };
 function smTypeTag(person) {
   return person.smType === "university" ? "Uni Focus" : null;
 }
+
+// University Focus SMs don't do missions — they have a flat monthly case
+// quota instead (see the Seeding hub). "Always starts at 40" per the user,
+// but is per-person overridable by an admin from there.
+const DEFAULT_SEEDING_QUOTA = 40;
 const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
 const CLOTHING_SIZES = ["S", "M", "L", "XL"];
 
@@ -995,11 +1000,11 @@ export default function MissionPortal() {
   }
 
   // ---- roster mutations (scoped to the active team) ----
-  // smType is chosen once, at add-time — "field" (does missions, the
-  // default/majority) or "university" (does case-seeding instead; see
-  // University Focus notes). Nothing currently branches app behavior on it
-  // yet beyond the roster tag below — that's the next step once the
-  // University Focus hub itself gets built.
+  // smType is chosen once, at add-time — "field" (does missions) or
+  // "university" (does case-seeding instead, via the Seeding hub below).
+  // No seedingQuota is stamped on here — it defaults to DEFAULT_SEEDING_QUOTA
+  // (40) wherever it's read until an admin overrides it, so "always starts
+  // at 40" holds even if a member's smType changes later.
   function addMember(name, smType = "field") {
     const id = uid("p");
     commitTeam((t) => ({
@@ -1032,6 +1037,23 @@ export default function MissionPortal() {
 
   function updateYearlyCanGoals(next) {
     commitTeam({ yearlyCanGoals: next });
+  }
+
+  // ---- University Focus seeding (cases, not missions) ----
+  function updateSeedingQuota(personId, quota) {
+    commitTeam((t) => ({
+      roster: t.roster.map((r) => (r.id === personId ? { ...r, seedingQuota: Math.max(0, quota) } : r)),
+    }));
+  }
+
+  function updateSeedingProgress(personId, cases) {
+    commitTeam((t) => ({
+      seedingProgress: { ...(t.seedingProgress || {}), [personId]: Math.max(0, cases) },
+    }));
+  }
+
+  function updateSeedingNotes(notes) {
+    commitTeam({ seedingNotes: notes });
   }
 
   // Adding an occasion extends the splits map; removing one is refused
@@ -1073,6 +1095,11 @@ export default function MissionPortal() {
         windowNote: "",
         deadlines: { missionsDue: null },
         planningConfig: { ...t.planningConfig, cansGoal: 0, totalCases: 0 },
+        // University Focus cases-placed count is a monthly running total —
+        // reset it like the can goal. Each person's target quota lives on
+        // their roster entry instead (see seedingQuota), so it carries over
+        // unchanged, same as priorities/splits/roster do.
+        seedingProgress: {},
       };
     });
   }
@@ -1295,8 +1322,12 @@ export default function MissionPortal() {
           <div className="rail-label">{activeTeam.name}</div>
           <nav>
             {activeTeam.roster.map((p) => {
+              const isUni = p.smType === "university";
               const list = currentMonthTeam.missions.filter((m) => m.assigneeIds.includes(p.id));
               const done = list.filter((m) => m.status === "completed").length;
+              const progressLabel = isUni
+                ? `${currentMonthTeam.seedingProgress?.[p.id] || 0}/${p.seedingQuota ?? DEFAULT_SEEDING_QUOTA}`
+                : `${done}/${list.length}`;
               return (
                 <button
                   key={p.id}
@@ -1308,7 +1339,7 @@ export default function MissionPortal() {
                     {smTypeTag(p) && <span className="sm-type-tag">{smTypeTag(p)}</span>}
                     {p.id === myId && <span className="you-tag">you</span>}
                   </span>
-                  <span className="roster-progress">{done}/{list.length}</span>
+                  <span className="roster-progress">{progressLabel}</span>
                 </button>
               );
             })}
@@ -1344,7 +1375,20 @@ export default function MissionPortal() {
             </div>
           )}
 
-          {viewer && tab === "missions" && (
+          {viewer && tab === "missions" && viewer.smType === "university" && (
+            <SeedingHub
+              key={`${activeTeam.id}:${viewer.id}`}
+              viewer={viewer}
+              adminMode={adminMode}
+              casesLogged={currentMonthTeam.seedingProgress?.[viewer.id] || 0}
+              notes={currentMonthTeam.seedingNotes || ""}
+              onLogCases={(cases) => updateSeedingProgress(viewer.id, cases)}
+              onUpdateQuota={(quota) => updateSeedingQuota(viewer.id, quota)}
+              onUpdateNotes={updateSeedingNotes}
+            />
+          )}
+
+          {viewer && tab === "missions" && viewer.smType !== "university" && (
             <MissionsTab
               key={`${activeTeam.id}:${viewer.id}`}
               data={currentMonthTeam}
@@ -1665,9 +1709,12 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
         <div className="card-head"><h2><Users size={16} /> Team progress</h2></div>
         <ul className="dashboard-progress-list">
           {roster.map((p) => {
+            const isUni = p.smType === "university";
+            const quota = p.seedingQuota ?? DEFAULT_SEEDING_QUOTA;
+            const cases = data.seedingProgress?.[p.id] || 0;
             const list = data.missions.filter((m) => m.assigneeIds.includes(p.id));
             const done = list.filter((m) => m.status === "completed").length;
-            const pct = list.length ? Math.round((done / list.length) * 100) : 0;
+            const pct = isUni ? (quota > 0 ? Math.min(100, Math.round((cases / quota) * 100)) : 0) : (list.length ? Math.round((done / list.length) * 100) : 0);
             return (
               <li key={p.id}>
                 <button className="dashboard-progress-row" onClick={() => onSelectPerson(p.id)}>
@@ -1679,7 +1726,7 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
                   <span className="dashboard-progress-bar-wrap">
                     <span className="dashboard-progress-bar" style={{ width: `${pct}%` }} />
                   </span>
-                  <span className="roster-progress">{done}/{list.length}</span>
+                  <span className="roster-progress">{isUni ? `${cases}/${quota}` : `${done}/${list.length}`}</span>
                 </button>
               </li>
             );
@@ -1827,6 +1874,78 @@ function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpd
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+// University Focus SMs don't do missions — this replaces the Missions tab
+// for them. Deliberately minimal per the user's own framing: a quota, a
+// self-reported running count (same "student logs their own work" pattern
+// as a seeding mission's cans-placed field), and whatever notes Hunter has
+// left for the team's Uni Focus SMs. Quota editing is admin-only; logging
+// cases is left to the SM themselves (or an admin standing in for them).
+function SeedingHub({ viewer, adminMode, casesLogged, notes, onLogCases, onUpdateQuota, onUpdateNotes }) {
+  const quota = viewer.seedingQuota ?? DEFAULT_SEEDING_QUOTA;
+  const pct = quota > 0 ? Math.min(100, Math.round((casesLogged / quota) * 100)) : 0;
+  const [casesDraft, setCasesDraft] = useState(String(casesLogged));
+  useEffect(() => { setCasesDraft(String(casesLogged)); }, [casesLogged]);
+  const [notesDraft, setNotesDraft] = useState(notes);
+  useEffect(() => { setNotesDraft(notes); }, [notes]);
+
+  return (
+    <div className="tab-content">
+      <section className="card">
+        <div className="card-head">
+          <h2>{viewer.name}'s seeding</h2>
+          <Badge tone={quota > 0 && casesLogged >= quota ? "good" : "default"}>{casesLogged} of {quota} cases</Badge>
+        </div>
+        <p className="muted empty-hint">University Focus — cases placed this month, not missions.</p>
+        <div className="yearly-goal-bar-wrap">
+          <span className="yearly-goal-bar yearly-goal-bar-good" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="gen-inputs">
+          <label className="gen-field">
+            <span>Cases placed so far</span>
+            <input
+              className="text-input"
+              type="number" min="0"
+              value={casesDraft}
+              onChange={(e) => setCasesDraft(e.target.value)}
+              onBlur={() => onLogCases(Math.max(0, parseInt(casesDraft || "0", 10)))}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            />
+          </label>
+          {adminMode && (
+            <label className="gen-field">
+              <span>Monthly quota</span>
+              <input
+                className="text-input"
+                type="number" min="0"
+                value={quota}
+                onChange={(e) => onUpdateQuota(Math.max(0, parseInt(e.target.value || "0", 10)))}
+              />
+            </label>
+          )}
+        </div>
+      </section>
+
+      {(adminMode || notes) && (
+        <section className="card">
+          <div className="card-head"><h2>Notes from Hunter</h2></div>
+          {adminMode ? (
+            <textarea
+              className="text-input"
+              rows={4}
+              placeholder="Anything the University Focus SMs on this team need to know — placement rules, flavor mix, reminders..."
+              value={notesDraft}
+              onChange={(e) => setNotesDraft(e.target.value)}
+              onBlur={() => onUpdateNotes(notesDraft)}
+            />
+          ) : (
+            <p className="muted">{notes}</p>
+          )}
+        </section>
+      )}
     </div>
   );
 }
