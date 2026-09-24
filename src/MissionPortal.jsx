@@ -157,6 +157,11 @@ const SEED = {
 };
 
 const PRIORITY_LABELS = { 1: "Low", 2: "Standard", 3: "High" };
+// Field Focus is the default/majority, so it's left unlabeled — the tag
+// only calls out the exception, same spirit as the "you" tag.
+function smTypeTag(person) {
+  return person.smType === "university" ? "Uni Focus" : null;
+}
 const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
 const CLOTHING_SIZES = ["S", "M", "L", "XL"];
 
@@ -990,10 +995,15 @@ export default function MissionPortal() {
   }
 
   // ---- roster mutations (scoped to the active team) ----
-  function addMember(name) {
+  // smType is chosen once, at add-time — "field" (does missions, the
+  // default/majority) or "university" (does case-seeding instead; see
+  // University Focus notes). Nothing currently branches app behavior on it
+  // yet beyond the roster tag below — that's the next step once the
+  // University Focus hub itself gets built.
+  function addMember(name, smType = "field") {
     const id = uid("p");
     commitTeam((t) => ({
-      roster: [...t.roster, { id, name }],
+      roster: [...t.roster, { id, name, smType }],
       inventory: { ...t.inventory, [id]: emptyInventory() },
     }));
     return id;
@@ -1293,7 +1303,11 @@ export default function MissionPortal() {
                   className={`roster-item ${viewId === p.id ? "roster-item-active" : ""}`}
                   onClick={() => { setViewId(p.id); setTab("missions"); }}
                 >
-                  <span className="roster-name">{p.name}{p.id === myId && <span className="you-tag">you</span>}</span>
+                  <span className="roster-name">
+                    {p.name}
+                    {smTypeTag(p) && <span className="sm-type-tag">{smTypeTag(p)}</span>}
+                    {p.id === myId && <span className="you-tag">you</span>}
+                  </span>
                   <span className="roster-progress">{done}/{list.length}</span>
                 </button>
               );
@@ -1478,7 +1492,8 @@ function IdentityModal({ roster, onPick, onCreate, onAdminClick }) {
             </button>
             {roster.map((p) => (
               <button key={p.id} className="identity-row" onClick={() => onPick(p.id)}>
-                {p.name} <ChevronRight size={15} />
+                <span>{p.name}{smTypeTag(p) && <span className="sm-type-tag">{smTypeTag(p)}</span>}</span>
+                <ChevronRight size={15} />
               </button>
             ))}
           </div>
@@ -1507,12 +1522,20 @@ function IdentityModal({ roster, onPick, onCreate, onAdminClick }) {
 function AddMemberInline({ onAdd }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [smType, setSmType] = useState("field");
   if (!open) {
     return (
       <button className="rail-add" onClick={() => setOpen(true)}>
         <Plus size={14} /> Add teammate
       </button>
     );
+  }
+  function submit() {
+    if (!name.trim()) return;
+    onAdd(name.trim(), smType);
+    setName("");
+    setSmType("field");
+    setOpen(false);
   }
   return (
     <div className="rail-add-form">
@@ -1523,11 +1546,15 @@ function AddMemberInline({ onAdd }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); }
+          if (e.key === "Enter") submit();
           if (e.key === "Escape") setOpen(false);
         }}
       />
-      <button className="btn btn-primary btn-sm" onClick={() => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } }}>Add</button>
+      <div className="sm-type-picker">
+        <button type="button" className={`sm-type-option ${smType === "field" ? "sm-type-option-active" : ""}`} onClick={() => setSmType("field")}>Field Focus</button>
+        <button type="button" className={`sm-type-option ${smType === "university" ? "sm-type-option-active" : ""}`} onClick={() => setSmType("university")}>Uni Focus</button>
+      </div>
+      <button className="btn btn-primary btn-sm" onClick={submit}>Add</button>
     </div>
   );
 }
@@ -1645,7 +1672,9 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
               <li key={p.id}>
                 <button className="dashboard-progress-row" onClick={() => onSelectPerson(p.id)}>
                   <span className="dashboard-progress-name">
-                    {p.name}{p.id === myId && <span className="you-tag">you</span>}
+                    {p.name}
+                    {smTypeTag(p) && <span className="sm-type-tag">{smTypeTag(p)}</span>}
+                    {p.id === myId && <span className="you-tag">you</span>}
                   </span>
                   <span className="dashboard-progress-bar-wrap">
                     <span className="dashboard-progress-bar" style={{ width: `${pct}%` }} />
@@ -2987,6 +3016,13 @@ function PortalStyles() {
         padding: 1px 6px;
         border-radius: 20px;
       }
+      .sm-type-tag {
+        font-size: 10px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        opacity: 0.55;
+      }
       .roster-progress { font-family: 'IBM Plex Mono', monospace; font-size: 12px; opacity: 0.75; }
       .rail-add {
         display: flex; align-items: center; gap: 6px;
@@ -3001,6 +3037,13 @@ function PortalStyles() {
       }
       .rail-add:hover { border-color: var(--ink); color: var(--ink); }
       .rail-add-form { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+      .sm-type-picker { display: flex; gap: 6px; }
+      .sm-type-option {
+        flex: 1; font-size: 11.5px; padding: 5px 0; border-radius: 7px;
+        border: 1px solid var(--line); background: #fff; color: var(--ink-soft);
+        cursor: pointer;
+      }
+      .sm-type-option-active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 
       .main-panel { flex: 1; padding: 24px 28px 32px; overflow-y: auto; }
 
