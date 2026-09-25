@@ -183,6 +183,10 @@ function occasionKind(occasion) {
   return "sampling";
 }
 
+// Share of the monthly can goal that becomes sampling missions; the rest is
+// seeding, per the planning sheet's 85 / 15 split.
+const DEFAULT_SAMPLING_PCT = 85;
+
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -1311,6 +1315,8 @@ export default function MissionPortal() {
             <DashboardTab
               data={currentMonthTeam}
               myId={myId}
+              adminMode={adminMode}
+              onUpdateNotes={(importantNotes) => commitTeam({ importantNotes })}
               placedAssets={data.placedAssets || []}
               missionContacts={data.missionContacts || []}
               isPastMissionsDue={isPastMissionsDue}
@@ -1585,7 +1591,55 @@ function AddMemberInline({ onAdd }) {
   );
 }
 
-function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson, onToggleVolunteer }) {
+// The planning sheet's "Important Notes/Dates" box: a short team-wide list
+// every SM sees on the dashboard (campus rules, key dates, reminders). The
+// FMS edits it in admin mode; hidden for everyone else when empty.
+function ImportantNotesCard({ notes, adminMode, onChange }) {
+  const [draft, setDraft] = useState("");
+  if (!adminMode && notes.length === 0) return null;
+  function add() {
+    const text = draft.trim();
+    if (!text) return;
+    onChange([...notes, { id: uid("note"), text }]);
+    setDraft("");
+  }
+  return (
+    <section className="card" id="tour-important-notes">
+      <div className="card-head"><h2><Megaphone size={16} /> Important notes &amp; dates</h2></div>
+      {notes.length === 0 ? (
+        <p className="muted empty-hint">Nothing posted yet. Add campus rules, key dates, or reminders for the whole team.</p>
+      ) : (
+        <ul className="suggestion-list">
+          {notes.map((n) => (
+            <li key={n.id} className="suggestion-row">
+              <Megaphone size={15} className="suggestion-icon" />
+              <span className="suggestion-text">{n.text}</span>
+              {adminMode && (
+                <IconBtn danger title="Remove note" onClick={() => onChange(notes.filter((x) => x.id !== n.id))}>
+                  <Trash2 size={14} />
+                </IconBtn>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {adminMode && (
+        <div className="add-row" style={{ marginTop: 10 }}>
+          <input
+            className="text-input"
+            placeholder="e.g. ArtPrize Awards (10/3): double the cans!"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+          />
+          <button className="btn btn-primary btn-sm" disabled={!draft.trim()} onClick={add}><Plus size={14} /> Add</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson, onToggleVolunteer, onUpdateNotes }) {
   const roster = data.roster;
   // Past-dated events drop off here automatically (they stay on the admin
   // card, flagged, until someone deletes them). Undated ones never expire.
@@ -1624,6 +1678,8 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
           </p>
         )}
       </section>
+
+      <ImportantNotesCard notes={data.importantNotes || []} adminMode={adminMode} onChange={onUpdateNotes} />
 
       {yearlyGoal.hasData && (
         <section className="card">
@@ -2387,7 +2443,7 @@ function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
       </label>
       <div className="yearly-goal-table">
         <div className="yearly-goal-table-head">
-          <span>Month</span><span>Goal</span><span>Actual</span>
+          <span>Month</span><span>Goal</span><span>Actual</span><span>Difference</span>
         </div>
         {local.months.map((m, i) => (
           <div className="yearly-goal-table-row" key={MONTH_LABELS[i]}>
@@ -2405,6 +2461,13 @@ function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
               value={m.actual ?? ""}
               onChange={(e) => setMonthField(i, "actual", e.target.value === "" ? null : Math.max(0, parseInt(e.target.value, 10)))}
             />
+            {m.actual === null || m.actual === undefined || m.actual === "" ? (
+              <span className="yearly-diff yearly-diff-none">—</span>
+            ) : (
+              <span className={`yearly-diff ${m.actual >= (m.goal || 0) ? "yearly-diff-good" : "yearly-diff-bad"}`}>
+                {m.actual - (m.goal || 0) >= 0 ? "+" : ""}{(m.actual - (m.goal || 0)).toLocaleString()}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -2667,9 +2730,15 @@ function PlanGenerator({ config, roster, occasions, onUpdateConfig, onGenerate }
     setLocal(next);
     onUpdateConfig(next);
   }
+  // Mirrors the planning sheet's formula: a share of the month's cans is
+  // held back for seeding (15% by default), and only the sampling share is
+  // turned into cases and then missions.
+  const samplingPct = local.samplingPct ?? DEFAULT_SAMPLING_PCT;
+  const seedingCans = Math.round((local.cansGoal || 0) * (1 - samplingPct / 100));
   function setCansField(field, value) {
     const next = { ...local, [field]: value };
-    next.totalCases = Math.round((next.cansGoal || 0) / (next.cansPerCase || 1));
+    const pct = next.samplingPct ?? DEFAULT_SAMPLING_PCT;
+    next.totalCases = Math.round(((next.cansGoal || 0) * (pct / 100)) / (next.cansPerCase || 1));
     setLocal(next);
     onUpdateConfig(next);
   }
@@ -2722,6 +2791,15 @@ function PlanGenerator({ config, roster, occasions, onUpdateConfig, onGenerate }
           />
         </label>
         <label className="gen-field">
+          <span>Sampling share %</span>
+          <input
+            className="text-input"
+            type="number" min="0" max="100"
+            value={samplingPct}
+            onChange={(e) => setCansField("samplingPct", Math.min(100, Math.max(0, parseInt(e.target.value || "0", 10))))}
+          />
+        </label>
+        <label className="gen-field">
           <span>Cans per case</span>
           <input
             className="text-input"
@@ -2741,7 +2819,8 @@ function PlanGenerator({ config, roster, occasions, onUpdateConfig, onGenerate }
         </label>
       </div>
       <p className="muted empty-hint" style={{ marginTop: -6 }}>
-        = {local.totalCases || 0} cases this month
+        = {local.totalCases || 0} sampling cases this month
+        {seedingCans > 0 && ` · ${seedingCans.toLocaleString()} cans (${100 - samplingPct}%) held back for seeding`}
       </p>
 
       <div className="split-head">
@@ -3495,7 +3574,11 @@ function PortalStyles() {
       .yearly-goal-bar-good { background: var(--success); }
       .yearly-goal-bar-bad { background: var(--danger); }
       .yearly-goal-table { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
-      .yearly-goal-table-head, .yearly-goal-table-row { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 10px; align-items: center; }
+      .yearly-goal-table-head, .yearly-goal-table-row { display: grid; grid-template-columns: 64px 1fr 1fr 96px; gap: 10px; align-items: center; }
+      .yearly-diff { font-size: 13px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+      .yearly-diff-good { color: var(--success); }
+      .yearly-diff-bad { color: var(--danger); }
+      .yearly-diff-none { color: var(--ink-soft); font-weight: 400; }
       .yearly-goal-table-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); padding: 0 2px 4px; }
       .yearly-goal-table-row { padding: 3px 0; }
 
