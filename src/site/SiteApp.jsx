@@ -23,7 +23,7 @@ export default function SiteApp() {
     page = <BranchSetup />;
     title = "Set up your branch — Mission Manifest";
   } else if (path.startsWith("/site/login/manager")) {
-    page = <LoginStub role="FMS" nextHref="/site/branch-setup" />;
+    page = <LoginStub role="FMS" isFms />;
     title = "FMS sign-in — Mission Manifest";
   } else if (path.startsWith("/site/login/sm")) {
     page = <LoginStub role="Student Marketeer" nextHref="/plan" />;

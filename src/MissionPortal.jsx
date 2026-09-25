@@ -303,7 +303,7 @@ function migrateTeamShape(team) {
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function emptyYearlyCanGoals(year = new Date().getFullYear()) {
-  return { year, months: MONTH_LABELS.map(() => ({ goal: 0, actual: null })) };
+  return { year, yearlyTotal: null, months: MONTH_LABELS.map(() => ({ goal: 0, actual: null })) };
 }
 
 // Pace is judged only against months Hunter has actually reported (`actual`
@@ -311,16 +311,24 @@ function emptyYearlyCanGoals(year = new Date().getFullYear()) {
 // even when perfectly on track, and comparing to today's calendar date
 // would break if reporting lags. `pct` (for the bar's fill) is still against
 // the full-year goal, since that's the real finish line.
+//
+// The annual finish line is the `yearlyTotal` Hunter types in when there is
+// one — summing monthly goals would under- or over-state the year whenever
+// only some months have a goal entered. Monthly goals are still used for
+// pace; a reported month with no goal of its own falls back to an even
+// twelfth of the yearly total.
 function computeYearlyCanProgress(yearlyCanGoals) {
   const months = yearlyCanGoals?.months || [];
-  const totalGoal = months.reduce((s, m) => s + (Number(m.goal) || 0), 0);
+  const monthGoalSum = months.reduce((s, m) => s + (Number(m.goal) || 0), 0);
+  const yearlyTotal = Number(yearlyCanGoals?.yearlyTotal) || 0;
+  const totalGoal = yearlyTotal > 0 ? yearlyTotal : monthGoalSum;
   let actualToDate = 0;
   let goalToDate = 0;
   let reportedMonths = 0;
   months.forEach((m) => {
     if (m.actual !== null && m.actual !== undefined && m.actual !== "") {
       actualToDate += Number(m.actual) || 0;
-      goalToDate += Number(m.goal) || 0;
+      goalToDate += Number(m.goal) || (yearlyTotal > 0 ? Math.round(yearlyTotal / 12) : 0);
       reportedMonths += 1;
     }
   });
@@ -372,7 +380,7 @@ const TOUR_STEPS_BASE = [
     target: "#tour-missions-card",
     setup: (ctx) => ctx.setTab("missions"),
     title: "Your missions",
-    body: "Check missions off as you complete them. Your FMS may suggest a location for some — that shows up here too.",
+    body: "Check each mission off once you've planned it, so you can see what's set and what's still left. Your FMS may suggest a location for some — that shows up here too. (University Focus SMs get a suggestions page here instead.)",
   },
   {
     target: "#tour-nav",
@@ -407,9 +415,35 @@ const TOUR_STEPS_FINAL = [
   },
 ];
 
-function buildTourSteps(adminMode) {
+// University Focus SMs have no missions — their whole page is the FMS's
+// suggestions — so they get a shorter tour pointed at that instead.
+const TOUR_STEPS_UNI = [
+  {
+    title: "Welcome to Mission Manifest",
+    body: "A quick tour of how this works — about a minute, skip anytime.",
+  },
+  {
+    target: "#tour-roster-rail",
+    title: "Your team",
+    body: "Everyone on the team is listed here. Your own name is marked “you.”",
+  },
+  {
+    target: "#tour-uni-guide",
+    setup: (ctx) => ctx.setTab("missions"),
+    title: "Your University Focus plan",
+    body: "As a University Focus SM, this page is all you need: suggestions from your FMS on where and how to seed, some just for you and some for everyone. No suggestions means carry on as planned. Log your cases in RBU as usual.",
+  },
+  {
+    target: "#tour-nav",
+    setup: (ctx) => ctx.setTab("gear"),
+    title: "Gear & placements",
+    body: "Log fridges and barrels you place and gear you're carrying — shared with the whole team.",
+  },
+];
+
+function buildTourSteps(adminMode, isUni = false) {
   return [
-    ...TOUR_STEPS_BASE,
+    ...(isUni ? TOUR_STEPS_UNI : TOUR_STEPS_BASE),
     ...(adminMode ? TOUR_STEPS_ADMIN_POINTER : TOUR_STEPS_ADMIN_HINT),
     ...TOUR_STEPS_FINAL,
   ];
@@ -843,7 +877,7 @@ export default function MissionPortal() {
   }, [loading, data, viewId]);
 
   function startTour() {
-    setTourSteps(buildTourSteps(adminMode));
+    setTourSteps(buildTourSteps(adminMode, viewer?.smType === "university"));
     setTourStep(0);
     setTourActive(true);
   }
@@ -934,9 +968,18 @@ export default function MissionPortal() {
 
   // Lets an admin flip an existing member between Field and Uni Focus —
   // needed for anyone added before smType existed, who defaults to field.
+  // University Focus SMs don't take missions, so switching someone to it
+  // pulls them off this month's not-yet-completed missions (solo ones are
+  // left unassigned for the FMS to hand out again). Completed missions and
+  // past months stay as they were, for history.
   function updateSmType(id, smType) {
     commitTeam((t) => ({
       roster: t.roster.map((r) => (r.id === id ? { ...r, smType } : r)),
+      missions: smType !== "university" ? t.missions : t.missions.map((m) => (
+        m.month === t.month && m.status !== "completed" && m.assigneeIds.includes(id)
+          ? { ...m, assigneeIds: m.assigneeIds.filter((pid) => pid !== id), updatedAt: new Date().toISOString(), updatedBy: currentActorName() }
+          : m
+      )),
     }));
   }
 
@@ -1710,7 +1753,7 @@ function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpd
   const list = data.missions.filter((m) => m.assigneeIds.includes(viewer.id));
   const [newOccasion, setNewOccasion] = useState(data.occasions[0]);
   const [newDirective, setNewDirective] = useState("");
-  const missingLocations = list.filter((m) => m.kind !== "seeding" && !m.location.trim()).length;
+  const missingLocations = list.filter((m) => !m.location.trim()).length;
   const nameOf = (id) => data.roster.find((r) => r.id === id)?.name;
   const quotaSummary = computeQuotaSummary(data).filter((q) => q.planned > 0);
 
@@ -1747,11 +1790,9 @@ function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpd
             const done = m.status === "completed";
             // Location is an admin-set suggestion, not something the student
             // picks — this is the "what needs to be planned" view, not the
-            // planning app. Seeding is the one exception: its "location"
-            // field is really a self-reported cans-placed count, which is
-            // the student's own report of work done, same as checking a
-            // mission off.
-            const canEditField = adminMode || m.kind === "seeding";
+            // planning app. Can counts live in RBU, so no mission kind asks
+            // for one here.
+            const canEditField = adminMode;
             return (
               <li key={m.id} className={`mission-row ${done ? "mission-done" : ""}`}>
                 <button className="mission-check" onClick={() => onToggle(m.id)}>
@@ -1763,17 +1804,14 @@ function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpd
                   {canEditField ? (
                     <input
                       className="mission-note-input"
-                      type={m.kind === "seeding" ? "number" : "text"}
-                      min={m.kind === "seeding" ? "0" : undefined}
+                      type="text"
                       value={m.location}
-                      placeholder={m.kind === "seeding" ? "Cans placed" : "Suggested location…"}
+                      placeholder="Suggested location…"
                       onChange={(e) => onUpdateMission(m.id, { location: e.target.value })}
                     />
                   ) : (
                     <span className="mission-note">
-                      {m.kind === "seeding"
-                        ? (m.location ? `${m.location} cans placed` : "No cans logged yet")
-                        : (m.location || "No location suggested yet")}
+                      {m.location || "No location suggested yet"}
                     </span>
                   )}
                   {(m.date || partnerId) && (
@@ -1872,7 +1910,7 @@ function UniFocusGuide({ viewer, roster, adminMode, suggestions, onChange }) {
 
   return (
     <div className="tab-content">
-      <section className="card">
+      <section className="card" id="tour-uni-guide">
         <div className="card-head">
           <h2>{viewer.name}'s University Focus plan</h2>
           <Badge>University Focus</Badge>
@@ -1884,12 +1922,12 @@ function UniFocusGuide({ viewer, roster, adminMode, suggestions, onChange }) {
 
       <section className="card">
         <div className="card-head"><h2><Lightbulb size={16} /> Just for {viewer.name.split(" ")[0]}</h2></div>
-        {list(mine, adminMode ? "No personal suggestions yet. Add one below." : "Nothing just for you yet. Check back after your FMS plans the month.")}
+        {list(mine, adminMode ? "No personal suggestions yet. Add one below." : "No suggestions from your FMS right now. Continue as planned and find seeding spots on your own.")}
       </section>
 
       <section className="card">
         <div className="card-head"><h2><Users size={16} /> For all University Focus SMs</h2></div>
-        {list(everyone, "No team-wide suggestions yet.")}
+        {list(everyone, adminMode ? "No team-wide suggestions yet." : "Nothing team-wide this month. Carry on as planned.")}
       </section>
 
       {adminMode && (
@@ -2317,6 +2355,12 @@ function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
     onUpdate(next);
   }
 
+  function setYearlyTotal(value) {
+    const next = { ...local, yearlyTotal: value };
+    setLocal(next);
+    onUpdate(next);
+  }
+
   const progress = computeYearlyCanProgress(local);
 
   return (
@@ -2328,9 +2372,19 @@ function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
         </Badge>
       </div>
       <p className="muted empty-hint">
-        Goal is the corporate target for each month; fill in Actual once real numbers come back for that month —
-        leave it blank until then. Feeds the "how we square up" bar on the dashboard.
+        Enter the yearly total from corporate, then each month's goal. Fill in Actual after each month closes and the
+        real numbers come back — leave it blank until then. Feeds the "how we square up" bar on the dashboard.
       </p>
+      <label className="gen-field" style={{ maxWidth: 260, marginBottom: 6 }}>
+        <span>Yearly total goal ({local.year || new Date().getFullYear()})</span>
+        <input
+          className="text-input"
+          type="number" min="0"
+          placeholder="Total cans for the year"
+          value={local.yearlyTotal ?? ""}
+          onChange={(e) => setYearlyTotal(e.target.value === "" ? null : Math.max(0, parseInt(e.target.value, 10)))}
+        />
+      </label>
       <div className="yearly-goal-table">
         <div className="yearly-goal-table-head">
           <span>Month</span><span>Goal</span><span>Actual</span>
@@ -2442,7 +2496,7 @@ function TeamTab({
 
       <PlanGenerator
         config={data.planningConfig}
-        roster={data.roster}
+        roster={data.roster.filter((p) => p.smType !== "university")}
         occasions={data.occasions}
         onUpdateConfig={onUpdatePlanningConfig}
         onGenerate={onPreviewGenerate}
@@ -2803,7 +2857,12 @@ function MissionsPlanTable({ team, onUpdateMission, onRemoveMission, onAddMissio
   const [occasionFilter, setOccasionFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [unassignedOnly, setUnassignedOnly] = useState(false);
-  const [newPerson, setNewPerson] = useState(team.roster[0]?.id || "");
+  // University Focus SMs don't take missions, so they're left out of every
+  // person/partner picker here — except as the current value on a row that
+  // already has them (e.g. a completed mission from before they switched).
+  const fieldRoster = team.roster.filter((p) => p.smType !== "university");
+  const optionsFor = (currentId) => team.roster.filter((p) => p.smType !== "university" || p.id === currentId);
+  const [newPerson, setNewPerson] = useState(fieldRoster[0]?.id || "");
   const [newOccasion, setNewOccasion] = useState(team.occasions[0]);
   const [newDirective, setNewDirective] = useState("");
 
@@ -2856,7 +2915,7 @@ function MissionsPlanTable({ team, onUpdateMission, onRemoveMission, onAddMissio
                   onChange={(e) => onUpdateMission(m.id, { assigneeIds: [e.target.value, partnerId].filter(Boolean) })}
                 >
                   <option value="">— Unassigned —</option>
-                  {team.roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {optionsFor(primary).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
                 <select
                   className="text-input select-input select-input-sm"
@@ -2877,7 +2936,7 @@ function MissionsPlanTable({ team, onUpdateMission, onRemoveMission, onAddMissio
                   onChange={(e) => onUpdateMission(m.id, { assigneeIds: [primary, e.target.value].filter(Boolean) })}
                 >
                   <option value="">No partner</option>
-                  {team.roster.filter((p) => p.id !== primary).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {optionsFor(partnerId).filter((p) => p.id !== primary).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
                 <input className="text-input" type="date" value={m.date} onChange={(e) => onUpdateMission(m.id, { date: e.target.value })} />
                 <input
@@ -2903,7 +2962,7 @@ function MissionsPlanTable({ team, onUpdateMission, onRemoveMission, onAddMissio
       <div className="add-row" style={{ marginTop: 12 }}>
         <select className="text-input select-input select-input-sm" value={newPerson} onChange={(e) => setNewPerson(e.target.value)}>
           <option value="">— Unassigned —</option>
-          {team.roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {fieldRoster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select className="text-input select-input select-input-sm" value={newOccasion} onChange={(e) => setNewOccasion(e.target.value)}>
           {team.occasions.map((o) => <option key={o} value={o}>{o}</option>)}

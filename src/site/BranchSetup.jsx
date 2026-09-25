@@ -21,7 +21,10 @@ function slug(name) {
 }
 
 export default function BranchSetup() {
-  const initial = loadSaved();
+  // ?new=1 (from "Set up a new branch" on FMS sign-in) starts a blank form
+  // instead of showing the branch already saved on this device.
+  const isNew = new URLSearchParams(window.location.search).get("new") === "1";
+  const initial = isNew ? null : loadSaved();
   const [managerName, setManagerName] = useState(initial?.managerName || "");
   const [branchName, setBranchName] = useState(initial?.branchName || "");
   const [teamNames, setTeamNames] = useState(initial?.teams?.length ? initial.teams : ["", ""]);
