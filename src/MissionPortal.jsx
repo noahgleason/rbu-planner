@@ -2516,7 +2516,7 @@ function TeamTab({
                   onChange={(e) => onUpdateSmType(p.id, e.target.value)}
                 >
                   <option value="field">Field Focus</option>
-                  <option value="university">Uni Focus</option>
+                  <option value="university">University Focus</option>
                 </select>
                 <select
                   className="text-input select-input select-input-sm"
