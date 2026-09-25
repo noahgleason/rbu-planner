@@ -5,9 +5,11 @@ import {
   ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
   LayoutDashboard, CalendarPlus, History, Megaphone, UserPlus, UserMinus,
 } from "lucide-react";
-import storage, {
-  hasHostStorage, getStoredPasscode, setStoredPasscode, clearStoredPasscode,
-} from "./storage.js";
+import storage from "./storage.js";
+
+// Presentation-only admin gate: checked in the browser, not the server, so
+// it keeps casual clicks out of the admin tab but isn't real security.
+const ADMIN_PASSWORD = "password";
 
 // ---------- Demo seed data ----------
 // NOTE: this currently seeds real teammate names/quotas from the internal
@@ -787,67 +789,16 @@ export default function MissionPortal() {
   const [tourActive, setTourActive] = useState(false);
   const [tourSteps, setTourSteps] = useState([]);
   const [tourStep, setTourStep] = useState(0);
-  // Gate: on the Netlify tier, nothing loads until the shared-team passcode
-  // is verified against the server (see netlify/functions/storage.js). The
-  // Claude-artifact tier has its own per-account storage and skips this.
-  const [gateChecking, setGateChecking] = useState(!hasHostStorage());
-  const [needsPasscode, setNeedsPasscode] = useState(false);
-  const [gateInput, setGateInput] = useState("");
-  const [gateError, setGateError] = useState("");
+  const [showAdminPrompt, setShowAdminPrompt] = useState(false);
   const saveTimer = useRef(null);
   const autoTourChecked = useRef(false);
   const lastPersistedRef = useRef(null);
-
-  // Tries `pass` (or, on boot, whatever's already stored) against the
-  // server. A confirmed wrong passcode (401) re-locks the gate; any other
-  // failure (function unreachable, e.g. plain `npm run dev`) is treated as
-  // "can't enforce this right now" and lets the app through, matching the
-  // rest of this file's fall-through-on-error storage philosophy.
-  async function verifyPasscode(pass) {
-    if (pass !== undefined) setStoredPasscode(pass);
-    try {
-      await storage.list("", true);
-      return true;
-    } catch (e) {
-      if (e && e.status === 401) {
-        clearStoredPasscode();
-        return false;
-      }
-      return true;
-    }
-  }
-
-  useEffect(() => {
-    if (hasHostStorage()) return;
-    (async () => {
-      const stored = getStoredPasscode();
-      if (!stored) {
-        setNeedsPasscode(true);
-        setGateChecking(false);
-        return;
-      }
-      const ok = await verifyPasscode();
-      setNeedsPasscode(!ok);
-      setGateChecking(false);
-    })();
-  }, []);
-
-  async function trySiteUnlock() {
-    const ok = await verifyPasscode(gateInput);
-    if (ok) {
-      setGateError("");
-      setNeedsPasscode(false);
-    } else {
-      setGateError("That's not the passcode.");
-    }
-  }
 
   // No remembered identity anymore — every visit starts anonymous on the
   // shared dashboard (see the `tab` default above); picking your name there
   // (or from the roster rail / "Who are you?") is what sets `myId` for the
   // rest of this session only.
   useEffect(() => {
-    if (gateChecking || needsPasscode) return;
     (async () => {
       const d = await loadData();
       lastPersistedRef.current = d;
@@ -855,21 +806,21 @@ export default function MissionPortal() {
       setActiveTeamId(d.teams[0].id);
       setLoading(false);
     })();
-  }, [gateChecking, needsPasscode]);
+  }, []);
 
   // Refetch shared data when the tab regains focus, so teammates' edits
   // made elsewhere show up without a manual reload. Skipped mid-save so it
   // can't clobber an edit that's still in flight.
   useEffect(() => {
     function onFocus() {
-      if (saveState === "saving" || gateChecking || needsPasscode) return;
+      if (saveState === "saving") return;
       loadData().then((fresh) => {
         if (fresh) { lastPersistedRef.current = fresh; setData(fresh); }
       });
     }
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [saveState, gateChecking, needsPasscode]);
+  }, [saveState]);
 
   useEffect(() => {
     if (loading || !data || !viewId || autoTourChecked.current) return;
@@ -916,41 +867,6 @@ export default function MissionPortal() {
       setTimeout(() => setSaveState("idle"), 1500);
     }, 350);
   }, []);
-
-  if (gateChecking) {
-    return (
-      <div className="portal-root portal-loading">
-        <PortalStyles />
-        <Loader2 className="spin" size={22} />
-        <span>Checking access…</span>
-      </div>
-    );
-  }
-
-  if (needsPasscode) {
-    return (
-      <div className="portal-root portal-loading">
-        <PortalStyles />
-        <div className="modal-card">
-          <div className="modal-head"><h3>Mission Manifest</h3></div>
-          <div className="modal-body">
-            <p className="muted">Enter the team passcode to continue.</p>
-            <input
-              className="text-input"
-              type="password"
-              autoFocus
-              value={gateInput}
-              onChange={(e) => setGateInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && trySiteUnlock()}
-              placeholder="Passcode"
-            />
-            {gateError && <div className="error-text"><AlertCircle size={14} />{gateError}</div>}
-            <button className="btn btn-primary" onClick={trySiteUnlock}>Continue</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (loading || !data) {
     return (
@@ -1012,6 +928,14 @@ export default function MissionPortal() {
       inventory: { ...t.inventory, [id]: emptyInventory() },
     }));
     return id;
+  }
+
+  // Lets an admin flip an existing member between Field and Uni Focus —
+  // needed for anyone added before smType existed, who defaults to field.
+  function updateSmType(id, smType) {
+    commitTeam((t) => ({
+      roster: t.roster.map((r) => (r.id === id ? { ...r, smType } : r)),
+    }));
   }
 
   // A person's solo missions (no partner) are deleted with them, matching
@@ -1261,8 +1185,15 @@ export default function MissionPortal() {
           }}
           onAdminClick={() => {
             setShowIdentityPicker(false);
-            setAdminMode(true);
+            setShowAdminPrompt(true);
           }}
+        />
+      )}
+
+      {showAdminPrompt && (
+        <AdminPasswordModal
+          onUnlock={() => { setShowAdminPrompt(false); setAdminMode(true); }}
+          onCancel={() => setShowAdminPrompt(false)}
         />
       )}
 
@@ -1301,7 +1232,7 @@ export default function MissionPortal() {
               <ShieldOff size={15} /> Exit admin
             </button>
           ) : (
-            <button id="tour-admin-toggle" className="btn btn-ghost" onClick={() => setAdminMode(true)}>
+            <button id="tour-admin-toggle" className="btn btn-ghost" onClick={() => setShowAdminPrompt(true)}>
               <Lock size={15} /> Admin
             </button>
           )}
@@ -1427,6 +1358,7 @@ export default function MissionPortal() {
               monthHistory={activeTeam.monthHistory || []}
               clothingStock={data.clothingStock || {}}
               onRemoveMember={removeMember}
+              onUpdateSmType={updateSmType}
               onExport={exportCsv}
               onStartNewMonth={startNewMonth}
               onUpdateMeta={(patch) => commitTeam(patch)}
@@ -1465,15 +1397,6 @@ export default function MissionPortal() {
           <button className="btn btn-ghost btn-sm" onClick={startTour}>
             <HelpCircle size={14} /> Tutorial mode
           </button>
-          {!hasHostStorage() && (
-            <button
-              className="btn btn-ghost btn-sm"
-              title="Forget the passcode on this device"
-              onClick={() => { clearStoredPasscode(); window.location.reload(); }}
-            >
-              <Lock size={14} /> Lock
-            </button>
-          )}
         </div>
       </footer>
 
@@ -1514,6 +1437,39 @@ function Modal({ children, onClose, title }) {
           <button className="icon-btn" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function AdminPasswordModal({ onUnlock, onCancel }) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState("");
+  function submit() {
+    if (value === ADMIN_PASSWORD) onUnlock();
+    else setError("That's not the admin password.");
+  }
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Admin mode</h3>
+          <IconBtn title="Close" onClick={onCancel}><X size={16} /></IconBtn>
+        </div>
+        <div className="modal-body">
+          <p className="muted">Enter the admin password to continue.</p>
+          <input
+            className="text-input"
+            type="password"
+            autoFocus
+            value={value}
+            onChange={(e) => { setValue(e.target.value); setError(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") onCancel(); }}
+            placeholder="Password"
+          />
+          {error && <div className="error-text"><AlertCircle size={14} />{error}</div>}
+          <button className="btn btn-primary" onClick={submit}>Unlock</button>
+        </div>
       </div>
     </div>
   );
@@ -2391,7 +2347,7 @@ function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
 }
 
 function TeamTab({
-  data, allMissions, monthHistory, clothingStock, onRemoveMember, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdateYearlyCanGoals, onUpdatePriority,
+  data, allMissions, monthHistory, clothingStock, onRemoveMember, onUpdateSmType, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdateYearlyCanGoals, onUpdatePriority,
   onAddOccasion, onRemoveOccasion, generatePreview, onPreviewGenerate, onConfirmGenerate, onCancelGenerate,
   addMember, onUpdateClothingStock, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
   onAddOpportunity, onRemoveOpportunity, onToggleVolunteer,
@@ -2554,6 +2510,14 @@ function TeamTab({
             <li key={p.id} className="roster-manage-row">
               <span>{p.name}</span>
               <div className="roster-manage-actions">
+                <select
+                  className="text-input select-input select-input-sm"
+                  value={p.smType === "university" ? "university" : "field"}
+                  onChange={(e) => onUpdateSmType(p.id, e.target.value)}
+                >
+                  <option value="field">Field Focus</option>
+                  <option value="university">Uni Focus</option>
+                </select>
                 <select
                   className="text-input select-input select-input-sm"
                   value={p.priority || 2}

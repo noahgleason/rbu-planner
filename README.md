@@ -88,16 +88,10 @@ npm run dev:netlify        # local dev with real Blobs-backed sync
 ```
 
 Once the site is deployed on Netlify (`git push`, or `netlify deploy --prod`),
-Blobs works automatically. One environment variable is required:
-
-```bash
-npx netlify env:set ADMIN_PASSCODE "your-team-passcode"
-```
-
-The storage function refuses every request (reads included) unless the
-`x-passcode` header matches this value, and the app shows a passcode gate
-before loading anything. `netlify dev` picks the variable up automatically
-from the linked site.
+Blobs works automatically. There's no site-wide passcode: anyone with the
+link can load the planner. Admin mode is gated by a client-side password
+(`ADMIN_PASSWORD` in `MissionPortal.jsx`, currently `password`) — fine for a
+presentation, not real security.
 
 ### Storage layout (v5)
 

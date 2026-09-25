@@ -126,7 +126,7 @@ export default function Landing() {
             <a className="site-btn site-btn-outline site-btn-lg" href="/site/branch-setup">FMS? Set up your branch</a>
           </div>
           <ul className="site-hero-proof">
-            <li><ShieldCheck size={14} /> Passcode-gated, shared storage</li>
+            <li><ShieldCheck size={14} /> Password-protected admin, shared storage</li>
             <li><CalendarDays size={14} /> Deadline-aware</li>
             <li><Users2 size={14} /> One FMS, many teams</li>
           </ul>
