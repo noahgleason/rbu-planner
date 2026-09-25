@@ -7,7 +7,7 @@ import {
   BookOpen, ExternalLink,
 } from "lucide-react";
 import storage from "./storage.js";
-import BrandMark, { RailArt } from "./BrandMark.jsx";
+import BrandMark from "./BrandMark.jsx";
 
 // Presentation-only admin gate: checked in the browser, not the server, so
 // it keeps casual clicks out of the admin tab but isn't real security.
@@ -1373,7 +1373,7 @@ export default function MissionPortal() {
 
       <header className="top-bar">
         <div className="brand brand-clickable" onClick={() => setTab("dashboard")} title="Go to dashboard">
-          <BrandMark size={34} />
+          <BrandMark height={32} />
           <div>
             <div className="brand-title">Mission Manifest</div>
             <div id="tour-month-label" className="brand-sub">{activeTeam.monthLabel}</div>
@@ -1449,7 +1449,6 @@ export default function MissionPortal() {
             })}
           </nav>
           {adminMode && <AddMemberInline onAdd={addMember} />}
-          <div className="rail-art"><RailArt /></div>
         </aside>
 
         <main className="main-panel">
@@ -3724,11 +3723,7 @@ function PortalStyles() {
         border-right: 1px solid var(--line);
         padding: 20px 14px;
         background: var(--card);
-        display: flex;
-        flex-direction: column;
       }
-      .rail-art { margin-top: auto; position: sticky; bottom: 0; padding-top: 24px; pointer-events: none; user-select: none; }
-      .rail-art-svg { display: block; width: 100%; height: auto; max-height: 260px; }
       .rail-label {
         font-size: 11px;
         color: var(--ink-soft);
@@ -3791,7 +3786,14 @@ function PortalStyles() {
       }
       .sm-type-option-active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 
-      .main-panel { flex: 1; padding: 24px 28px 32px; overflow-y: auto; }
+      /* Subtle speed-stripe pattern in the gaps between cards: navy
+         pinstripes with red and yellow dashes, on the paper background. */
+      .main-panel {
+        flex: 1; padding: 24px 28px 32px; overflow-y: auto;
+        background-color: var(--paper);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cpath d='M0 14L14 0M0 28L28 0M0 42L42 0M0 56L56 0M14 56L56 14M28 56L56 28M42 56L56 42' stroke='%23001C39' stroke-opacity='0.05' stroke-width='1'/%3E%3Cpath d='M17 25L24 18' stroke='%23DB0A40' stroke-opacity='0.3' stroke-width='2.4' stroke-linecap='round'/%3E%3Cpath d='M40 44L44 40' stroke='%23FFC906' stroke-opacity='0.85' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E");
+        background-size: 56px 56px;
+      }
 
       .empty-state {
         display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -4161,8 +4163,6 @@ function PortalStyles() {
         .roster-rail nav { display: flex; overflow-x: auto; gap: 6px; }
         .roster-item { width: auto; white-space: nowrap; }
         .rail-add, .rail-add-form { display: none; }
-        .roster-rail { display: block; }
-        .rail-art { display: none; }
         .main-panel { padding: 16px; }
         .quota-table-head, .quota-table-row { grid-template-columns: 1fr 60px 60px; gap: 6px; }
         .quota-table-4col .quota-table-head, .quota-table-4col .quota-table-row { grid-template-columns: 1fr 48px 48px 48px; }

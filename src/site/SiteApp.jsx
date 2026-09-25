@@ -40,7 +40,7 @@ export default function SiteApp() {
       <SiteStyles />
       {!isLanding && (
         <header className="site-header">
-          <a className="site-brand" href="/site"><BrandMark size={30} /> Mission Manifest</a>
+          <a className="site-brand" href="/site"><BrandMark height={28} /> Mission Manifest</a>
         </header>
       )}
       {page}

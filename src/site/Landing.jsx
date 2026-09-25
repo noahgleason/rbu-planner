@@ -101,7 +101,7 @@ export default function Landing() {
   return (
     <>
       <header className="site-header">
-        <a className="site-brand" href="/site"><BrandMark size={30} /> Mission Manifest</a>
+        <a className="site-brand" href="/site"><BrandMark height={28} /> Mission Manifest</a>
         <nav className="site-nav-links">
           <a href="#how-it-works">How it works</a>
           <a href="#for-teams">For teams</a>
