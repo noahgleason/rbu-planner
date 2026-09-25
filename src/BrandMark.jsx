@@ -46,3 +46,47 @@ export default function BrandMark({ height = 32, title = "Red Bull Mission Manif
     </svg>
   );
 }
+
+// Background for the planner's main panel: a few bundles of flowing
+// ribbons in Red Bull red, yellow, and navy that drift slowly, with small
+// dashes travelling along some lines. One big composition (no tiling), kept
+// in view with sticky positioning and painted behind the cards, so it only
+// shows in the gaps between them. Motion stops for prefers-reduced-motion.
+function ribbon(y, i, lift, dip, tail) {
+  return `M -120 ${y + i * 13} C 320 ${y - lift + i * 9}, 700 ${y + dip + i * 7}, 1340 ${y - tail + i * 12}`;
+}
+
+const BUNDLES = [
+  { key: "red", y: 150, lift: 150, dip: 190, tail: 60, count: 7, color: "#DB0A40", opacity: 0.16 },
+  { key: "navy", y: 400, lift: 110, dip: 130, tail: -30, count: 5, color: "#001C39", opacity: 0.07 },
+  { key: "yellow", y: 600, lift: 170, dip: 120, tail: 90, count: 6, color: "#FFC906", opacity: 0.45 },
+];
+
+export function FlowBackground() {
+  return (
+    <div className="flow-bg" aria-hidden="true">
+      <svg viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
+        {BUNDLES.map((b) => (
+          <g key={b.key} className={`flow-bundle flow-bundle-${b.key}`} fill="none" stroke={b.color}>
+            {Array.from({ length: b.count }, (_, i) => (
+              <path
+                key={i}
+                d={ribbon(b.y, i, b.lift, b.dip, b.tail)}
+                strokeWidth={i === Math.floor(b.count / 2) ? 2.4 : 1.2}
+                strokeOpacity={b.opacity * (1 - Math.abs(i - b.count / 2) / b.count)}
+              />
+            ))}
+            <path
+              className="flow-dashes"
+              d={ribbon(b.y, Math.floor(b.count / 2), b.lift, b.dip, b.tail)}
+              strokeWidth="3.2"
+              strokeLinecap="round"
+              strokeDasharray="1 46"
+              strokeOpacity={Math.min(1, b.opacity * 3.5)}
+            />
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}

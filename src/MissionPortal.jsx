@@ -7,7 +7,7 @@ import {
   BookOpen, ExternalLink,
 } from "lucide-react";
 import storage from "./storage.js";
-import BrandMark from "./BrandMark.jsx";
+import BrandMark, { FlowBackground } from "./BrandMark.jsx";
 
 // Presentation-only admin gate: checked in the browser, not the server, so
 // it keeps casual clicks out of the admin tab but isn't real security.
@@ -1452,6 +1452,7 @@ export default function MissionPortal() {
         </aside>
 
         <main className="main-panel">
+          <FlowBackground />
           {tab === "dashboard" && (
             <DashboardTab
               features={features}
@@ -3786,13 +3787,29 @@ function PortalStyles() {
       }
       .sm-type-option-active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 
-      /* Subtle speed-stripe pattern in the gaps between cards: navy
-         pinstripes with red and yellow dashes, on the paper background. */
       .main-panel {
         flex: 1; padding: 24px 28px 32px; overflow-y: auto;
-        background-color: var(--paper);
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cpath d='M0 14L14 0M0 28L28 0M0 42L42 0M0 56L56 0M14 56L56 14M28 56L56 28M42 56L56 42' stroke='%23001C39' stroke-opacity='0.05' stroke-width='1'/%3E%3Cpath d='M17 25L24 18' stroke='%23DB0A40' stroke-opacity='0.3' stroke-width='2.4' stroke-linecap='round'/%3E%3Cpath d='M40 44L44 40' stroke='%23FFC906' stroke-opacity='0.85' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E");
-        background-size: 56px 56px;
+        position: relative; isolation: isolate; min-width: 0;
+      }
+      /* Flowing ribbons behind the cards (see FlowBackground): a sticky,
+         viewport-tall layer that takes no space in the flow. */
+      .flow-bg {
+        position: sticky; top: 0; height: 100vh; margin: -24px -28px calc(-100vh + 24px);
+        z-index: -1; pointer-events: none; overflow: hidden;
+      }
+      .flow-bg svg { width: 100%; height: 100%; display: block; }
+      .flow-bundle { animation: flow-drift 22s ease-in-out infinite alternate; transform-box: view-box; }
+      .flow-bundle-navy { animation-duration: 28s; animation-direction: alternate-reverse; }
+      .flow-bundle-yellow { animation-duration: 25s; animation-delay: -8s; }
+      .flow-dashes { animation: flow-dash 9s linear infinite; }
+      .flow-bundle-yellow .flow-dashes { animation-duration: 12s; }
+      @keyframes flow-drift {
+        from { transform: translate(-40px, 10px) scaleY(0.96); }
+        to { transform: translate(40px, -18px) scaleY(1.05); }
+      }
+      @keyframes flow-dash { to { stroke-dashoffset: -470; } }
+      @media (prefers-reduced-motion: reduce) {
+        .flow-bundle, .flow-dashes { animation: none; }
       }
 
       .empty-state {
@@ -4164,6 +4181,7 @@ function PortalStyles() {
         .roster-item { width: auto; white-space: nowrap; }
         .rail-add, .rail-add-form { display: none; }
         .main-panel { padding: 16px; }
+        .flow-bg { margin: -16px -16px calc(-100vh + 16px); }
         .quota-table-head, .quota-table-row { grid-template-columns: 1fr 60px 60px; gap: 6px; }
         .quota-table-4col .quota-table-head, .quota-table-4col .quota-table-row { grid-template-columns: 1fr 48px 48px 48px; }
       }
