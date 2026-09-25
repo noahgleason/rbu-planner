@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Truck } from "lucide-react";
+import BrandMark from "../BrandMark.jsx";
 import Landing from "./Landing.jsx";
 import BranchSetup from "./BranchSetup.jsx";
 import LoginStub from "./LoginStub.jsx";
@@ -40,7 +40,7 @@ export default function SiteApp() {
       <SiteStyles />
       {!isLanding && (
         <header className="site-header">
-          <a className="site-brand" href="/site"><Truck size={20} strokeWidth={2.2} /> Mission Manifest</a>
+          <a className="site-brand" href="/site"><BrandMark size={30} /> Mission Manifest</a>
         </header>
       )}
       {page}

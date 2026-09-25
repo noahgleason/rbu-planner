@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  Truck, Package, ShieldCheck, ShieldOff, CheckCircle2, Circle, Plus, Trash2,
+  Package, ShieldCheck, ShieldOff, CheckCircle2, Circle, Plus, Trash2,
   Lock, Unlock, Download, X, Users, ClipboardList, Shirt, Refrigerator,
   ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
   LayoutDashboard, CalendarPlus, History, Megaphone, UserPlus, UserMinus, Lightbulb,
   BookOpen, ExternalLink,
 } from "lucide-react";
 import storage from "./storage.js";
+import BrandMark, { RailArt } from "./BrandMark.jsx";
 
 // Presentation-only admin gate: checked in the browser, not the server, so
 // it keeps casual clicks out of the admin tab but isn't real security.
@@ -1372,7 +1373,7 @@ export default function MissionPortal() {
 
       <header className="top-bar">
         <div className="brand brand-clickable" onClick={() => setTab("dashboard")} title="Go to dashboard">
-          <Truck size={20} strokeWidth={2.2} />
+          <BrandMark size={34} />
           <div>
             <div className="brand-title">Mission Manifest</div>
             <div id="tour-month-label" className="brand-sub">{activeTeam.monthLabel}</div>
@@ -1448,6 +1449,7 @@ export default function MissionPortal() {
             })}
           </nav>
           {adminMode && <AddMemberInline onAdd={addMember} />}
+          <div className="rail-art"><RailArt /></div>
         </aside>
 
         <main className="main-panel">
@@ -3722,7 +3724,11 @@ function PortalStyles() {
         border-right: 1px solid var(--line);
         padding: 20px 14px;
         background: var(--card);
+        display: flex;
+        flex-direction: column;
       }
+      .rail-art { margin-top: auto; position: sticky; bottom: 0; padding-top: 24px; pointer-events: none; user-select: none; }
+      .rail-art-svg { display: block; width: 100%; height: auto; max-height: 260px; }
       .rail-label {
         font-size: 11px;
         color: var(--ink-soft);
@@ -4155,6 +4161,8 @@ function PortalStyles() {
         .roster-rail nav { display: flex; overflow-x: auto; gap: 6px; }
         .roster-item { width: auto; white-space: nowrap; }
         .rail-add, .rail-add-form { display: none; }
+        .roster-rail { display: block; }
+        .rail-art { display: none; }
         .main-panel { padding: 16px; }
         .quota-table-head, .quota-table-row { grid-template-columns: 1fr 60px 60px; gap: 6px; }
         .quota-table-4col .quota-table-head, .quota-table-4col .quota-table-row { grid-template-columns: 1fr 48px 48px 48px; }
