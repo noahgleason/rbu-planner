@@ -4,6 +4,7 @@ import {
   Lock, Unlock, Download, X, Users, ClipboardList, Shirt, Refrigerator,
   ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
   LayoutDashboard, CalendarPlus, History, Megaphone, UserPlus, UserMinus, Lightbulb,
+  BookOpen, ExternalLink,
 } from "lucide-react";
 import storage from "./storage.js";
 
@@ -170,7 +171,26 @@ function smTypeTag(person) {
 // planning guide: suggestions their FMS writes, either for one person or
 // for every University Focus SM on the team. No counts, quotas or progress.
 const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
-const CLOTHING_SIZES = ["S", "M", "L", "XL"];
+const CLOTHING_SIZES = ["XXS", "XS", "S", "M", "L", "XL", "XXL"];
+
+// Clothing stock mirrors the planning sheet's Clothing Tracker: one row per
+// item + color + fit (e.g. Womens · Short sleeve · Grey), with a count per
+// size, scoped to a team (or shared by all teams when teamId is null).
+// Older data stored a bare {S, M, L, XL} count; that's read as one shared
+// "Team tee" row so nothing on hand disappears.
+function clothingRowsOf(clothingStock) {
+  if (clothingStock && Array.isArray(clothingStock.rows)) return clothingStock.rows;
+  const legacy = clothingStock || {};
+  const sizes = {};
+  CLOTHING_SIZES.forEach((sz) => { if (Number(legacy[sz]) > 0) sizes[sz] = Number(legacy[sz]); });
+  return Object.keys(sizes).length
+    ? [{ id: "legacy-stock", teamId: null, fit: "", item: "Team tee", color: "", sizes }]
+    : [];
+}
+
+function clothingRowLabel(row) {
+  return [row.fit, row.item, row.color].filter(Boolean).join(" · ") || "Clothing";
+}
 
 // ---------- Mission model ----------
 // A mission's `kind` follows from its occasion — sampling is the default,
@@ -518,8 +538,8 @@ const ADMIN_TOUR_STEPS = [
   {
     target: "#tour-clothing-stock",
     setup: (ctx) => ctx.setTab("team"),
-    title: "Clothing stock",
-    body: "Track how many of each size you have on hand — shown to everyone as context on the Gear & placements tab.",
+    title: "Clothing stock & tracker",
+    body: "Log what's on hand by item, color, and size. Hand something out and it comes off stock and shows under that person — so you always know who has what.",
   },
   {
     title: "That covers admin",
@@ -648,6 +668,7 @@ const teamKey = (id) => `v5:team:${id}`;
 const COMMON_ASSETS_KEY = "v5:common:assets";
 const COMMON_CONTACTS_KEY = "v5:common:contacts";
 const COMMON_CLOTHING_KEY = "v5:common:clothing";
+const COMMON_RESOURCES_KEY = "v5:common:resources";
 
 async function getJSON(key, fallback) {
   try {
@@ -669,6 +690,7 @@ async function writeAllV5(data) {
     storage.set(COMMON_ASSETS_KEY, JSON.stringify(data.placedAssets || []), true),
     storage.set(COMMON_CONTACTS_KEY, JSON.stringify(data.missionContacts || []), true),
     storage.set(COMMON_CLOTHING_KEY, JSON.stringify(data.clothingStock || {}), true),
+    storage.set(COMMON_RESOURCES_KEY, JSON.stringify(data.resources || []), true),
   ]);
 }
 
@@ -677,12 +699,13 @@ async function loadV5() {
   if (!ids) return null;
   const teams = await Promise.all(ids.map((id) => getJSON(teamKey(id), null)));
   if (teams.some((t) => !t)) return null; // index/teams out of sync -> treat as absent, don't render a broken team
-  const [placedAssets, missionContacts, clothingStock] = await Promise.all([
+  const [placedAssets, missionContacts, clothingStock, resources] = await Promise.all([
     getJSON(COMMON_ASSETS_KEY, []),
     getJSON(COMMON_CONTACTS_KEY, []),
     getJSON(COMMON_CLOTHING_KEY, {}),
+    getJSON(COMMON_RESOURCES_KEY, []),
   ]);
-  return { teams, placedAssets, missionContacts, clothingStock };
+  return { teams, placedAssets, missionContacts, clothingStock, resources };
 }
 
 // One-time v4 -> v5 migration: strips the plaintext adminPasscode field
@@ -737,11 +760,25 @@ async function persist(next, prev) {
     if (!prev || prev.clothingStock !== next.clothingStock) {
       writes.push(storage.set(COMMON_CLOTHING_KEY, JSON.stringify(next.clothingStock || {}), true));
     }
+    if (!prev || prev.resources !== next.resources) {
+      writes.push(storage.set(COMMON_RESOURCES_KEY, JSON.stringify(next.resources || []), true));
+    }
     await Promise.all(writes);
     return true;
   } catch (e) {
     return false;
   }
+}
+
+// A volunteer opportunity stays on the team's dashboard through its
+// expiration date (set when it's posted; defaults to the event date), then
+// drops off. Undated, unexpiring ones never expire.
+function opportunityExpiry(o) {
+  return o.expiresOn || o.date || "";
+}
+function isOpportunityOpen(o, today = new Date().toISOString().slice(0, 10)) {
+  const exp = opportunityExpiry(o);
+  return !exp || exp >= today;
 }
 
 // ---------- Small UI atoms ----------
@@ -1158,21 +1195,49 @@ export default function MissionPortal() {
     commit({ ...data, missionContacts: (data.missionContacts || []).filter((x) => x.id !== id) });
   }
 
-  // ---- clothing stock ----
-  function updateClothingStock(size, value) {
-    commit({ ...data, clothingStock: { ...(data.clothingStock || {}), [size]: value } });
+  // ---- clothing stock (rows per item/color/fit, counts per size) ----
+  function updateClothingRows(rows) {
+    commit({ ...data, clothingStock: { rows } });
+  }
+
+  // Handing something out takes one off the stock row and logs it in that
+  // person's "clothing in possession", so the Clothing tracker (who has
+  // what) and the stock count stay in step without double entry.
+  function handOutClothing(rowId, size, personId) {
+    const rows = clothingRowsOf(data.clothingStock).map((r) => (
+      r.id === rowId ? { ...r, sizes: { ...r.sizes, [size]: Math.max(0, (Number(r.sizes?.[size]) || 0) - 1) } } : r
+    ));
+    const row = rows.find((r) => r.id === rowId);
+    const inv = activeTeam.inventory[personId] || emptyInventory();
+    const entry = { id: uid("inv"), item: clothingRowLabel(row), size, qty: "1", fromStock: rowId, givenAt: new Date().toISOString() };
+    const nextTeams = data.teams.map((t) => (t.id === activeTeam.id
+      ? { ...t, inventory: { ...t.inventory, [personId]: { ...inv, clothing: [...inv.clothing, entry] } } }
+      : t));
+    commit({ ...data, teams: nextTeams, clothingStock: { rows } });
+  }
+
+  // ---- resources (branch-wide links and info, like the sheet's Admin tab) ----
+  function updateResources(resources) {
+    commit({ ...data, resources });
   }
 
   // ---- volunteer opportunities (scoped to the active team) ----
   // One-off RB-hosted events the FMS needs SMs to volunteer for —
   // separate from the monthly mission plan (not month-scoped, not part of
   // the can quota), since these come up ad hoc and outlast any one month.
-  function addOpportunity(title, details, date, location) {
+  function addOpportunity(title, details, date, location, expiresOn) {
     commitTeam((t) => ({
       volunteerOpportunities: [...(t.volunteerOpportunities || []), {
         id: uid("op"), title, details: details || "", date: date || "", location: location || "",
+        expiresOn: expiresOn || date || "",
         createdAt: new Date().toISOString(), createdBy: currentActorName(), volunteerIds: [],
       }],
+    }));
+  }
+
+  function updateOpportunity(oppId, patch) {
+    commitTeam((t) => ({
+      volunteerOpportunities: (t.volunteerOpportunities || []).map((o) => (o.id === oppId ? { ...o, ...patch } : o)),
     }));
   }
 
@@ -1249,7 +1314,8 @@ export default function MissionPortal() {
         </select>
         <nav className="top-nav" id="tour-nav">
           <TabBtn active={tab === "missions"} onClick={() => setTab("missions")} icon={<ClipboardList size={15} />} label="Missions" />
-          <TabBtn active={tab === "gear"} onClick={() => setTab("gear")} icon={<Package size={15} />} label="Gear & placements" />
+          <TabBtn active={tab === "gear"} onClick={() => setTab("gear")} icon={<Package size={15} />} label="Gear" />
+          <TabBtn active={tab === "resources"} onClick={() => setTab("resources")} icon={<BookOpen size={15} />} label="Resources" />
           {adminMode && <TabBtn active={tab === "team"} onClick={() => setTab("team")} icon={<Users size={15} />} label="Team & quotas" />}
         </nav>
         <div className="top-actions">
@@ -1364,9 +1430,14 @@ export default function MissionPortal() {
             />
           )}
 
+          {tab === "resources" && (
+            <ResourcesTab resources={data.resources || []} adminMode={adminMode} onChange={updateResources} />
+          )}
+
           {viewer && tab === "gear" && (
             <GearTab
               viewer={viewer}
+              teamId={activeTeam.id}
               placedByName={viewer.name}
               inventory={activeTeam.inventory[viewer.id] || emptyInventory()}
               placedAssets={data.placedAssets || []}
@@ -1404,13 +1475,15 @@ export default function MissionPortal() {
               onConfirmGenerate={confirmGeneratePlan}
               onCancelGenerate={cancelGeneratePlan}
               addMember={addMember}
-              onUpdateClothingStock={updateClothingStock}
+              onUpdateClothingRows={updateClothingRows}
+              onHandOutClothing={handOutClothing}
               onAddMission={addMission}
               onUpdateMission={updateMission}
               onRemoveMission={removeMission}
               onToggleMissionDone={toggleMissionDone}
               isPastMissionsDue={isPastMissionsDue}
               onAddOpportunity={addOpportunity}
+              onUpdateOpportunity={updateOpportunity}
               onRemoveOpportunity={removeOpportunity}
               onToggleVolunteer={toggleVolunteer}
             />
@@ -1644,7 +1717,7 @@ function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, is
   // Past-dated events drop off here automatically (they stay on the admin
   // card, flagged, until someone deletes them). Undated ones never expire.
   const today = new Date().toISOString().slice(0, 10);
-  const opportunities = (data.volunteerOpportunities || []).filter((o) => !o.date || o.date >= today);
+  const opportunities = (data.volunteerOpportunities || []).filter((o) => isOpportunityOpen(o, today));
   const nameOf = (id) => roster.find((r) => r.id === id)?.name || "Someone";
   const totalAssigned = data.missions.length;
   const totalDone = data.missions.filter((m) => m.status === "completed").length;
@@ -1724,11 +1797,13 @@ function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, is
                     {(o.date || o.location) && (
                       <span className="mission-secondary">{o.date}{o.date && o.location && " · "}{o.location}</span>
                     )}
+                    {opportunityExpiry(o) && <span className="mission-secondary">Sign-ups close {opportunityExpiry(o)}</span>}
                     <span className="muted opportunity-volunteers">
                       {o.volunteerIds.length === 0
                         ? "No one's signed up yet"
                         : `${o.volunteerIds.length} in: ${o.volunteerIds.map(nameOf).join(", ")}`}
                     </span>
+                    <EventPlanView plan={o.plan} nameOf={nameOf} />
                   </div>
                   <button
                     className={`btn btn-sm ${inIt ? "btn-ghost" : "btn-primary"}`}
@@ -2013,10 +2088,14 @@ function UniFocusGuide({ viewer, roster, adminMode, suggestions, onChange }) {
 }
 
 function GearTab({
-  viewer, placedByName, inventory, placedAssets, missionContacts, clothingStock,
+  viewer, teamId, placedByName, inventory, placedAssets, missionContacts, clothingStock,
   onAdd, onRemove, onAddAsset, onRemoveAsset, onToggleAssetStatus, onAddContact, onRemoveContact,
 }) {
-  const stockLine = CLOTHING_SIZES.map((s) => `${s} ${clothingStock[s] ?? 0}`).join(" · ");
+  const totals = {};
+  clothingRowsOf(clothingStock)
+    .filter((r) => !r.teamId || r.teamId === teamId)
+    .forEach((r) => CLOTHING_SIZES.forEach((sz) => { totals[sz] = (totals[sz] || 0) + (Number(r.sizes?.[sz]) || 0); }));
+  const stockLine = CLOTHING_SIZES.filter((sz) => totals[sz]).map((sz) => `${sz} ${totals[sz]}`).join(" · ") || "none logged";
 
   return (
     <div className="tab-content">
@@ -2214,18 +2293,19 @@ function GearSection({ title, icon, items, fields, onAdd, onRemove, renderItem, 
 // here is what makes it show up on everyone's Dashboard with a sign-up
 // button. Also lets admin log a volunteer directly (e.g. someone who texted
 // in instead of using the app) without needing that person to sign in.
-function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVolunteer }) {
+function OpportunitiesCard({ opportunities, roster, onAdd, onUpdate, onRemove, onToggleVolunteer }) {
   const [title, setTitle] = useState("");
   const [details, setDetails] = useState("");
   const [date, setDate] = useState("");
+  const [expiresOn, setExpiresOn] = useState("");
   const [location, setLocation] = useState("");
   const [addPerson, setAddPerson] = useState({});
   const today = new Date().toISOString().slice(0, 10);
 
   function submit() {
     if (!title.trim()) return;
-    onAdd(title.trim(), details.trim(), date, location.trim());
-    setTitle(""); setDetails(""); setDate(""); setLocation("");
+    onAdd(title.trim(), details.trim(), date, location.trim(), expiresOn);
+    setTitle(""); setDetails(""); setDate(""); setExpiresOn(""); setLocation("");
   }
 
   return (
@@ -2239,9 +2319,19 @@ function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVol
       <div className="gen-inputs" style={{ marginBottom: 12 }}>
         <input className="text-input" placeholder="Event title" value={title} onChange={(e) => setTitle(e.target.value)} />
         <input className="text-input" placeholder="Details (optional)" value={details} onChange={(e) => setDetails(e.target.value)} />
-        <input className="text-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <label className="gen-field">
+          <span>Event date</span>
+          <input className="text-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </label>
+        <label className="gen-field">
+          <span>Expires (sign-ups close)</span>
+          <input className="text-input" type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
+        </label>
         <input className="text-input" placeholder="Location (optional)" value={location} onChange={(e) => setLocation(e.target.value)} />
       </div>
+      <p className="muted empty-hint" style={{ marginTop: -4 }}>
+        Leave Expires blank to use the event date. After it passes, the event drops off the team's dashboard.
+      </p>
       <button className="btn btn-primary btn-sm" disabled={!title.trim()} onClick={submit}>
         <Plus size={14} /> Post opportunity
       </button>
@@ -2253,12 +2343,21 @@ function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVol
               <div className="opportunity-text">
                 <span className="opportunity-title">
                   {o.title}
-                  {o.date && o.date < today && <Badge>Past — no longer shown to the team</Badge>}
+                  {!isOpportunityOpen(o, today) && <Badge>Expired — no longer shown to the team</Badge>}
                 </span>
                 {o.details && <span className="opportunity-details">{o.details}</span>}
                 {(o.date || o.location) && (
                   <span className="mission-secondary">{o.date}{o.date && o.location && " · "}{o.location}</span>
                 )}
+                <label className="gen-field opportunity-expiry">
+                  <span>Expires</span>
+                  <input
+                    className="text-input text-input-sm"
+                    type="date"
+                    value={o.expiresOn ?? o.date ?? ""}
+                    onChange={(e) => onUpdate(o.id, { expiresOn: e.target.value })}
+                  />
+                </label>
                 <div className="opportunity-chips">
                   {o.volunteerIds.length === 0 && <span className="muted" style={{ fontSize: 12.5 }}>No one signed up yet</span>}
                   {o.volunteerIds.map((pid) => (
@@ -2285,6 +2384,11 @@ function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVol
                     <UserPlus size={13} /> Add
                   </button>
                 </div>
+                <EventPlanEditor
+                  plan={o.plan}
+                  roster={roster}
+                  onChange={(plan) => onUpdate(o.id, { plan })}
+                />
               </div>
               <IconBtn danger title="Remove opportunity" onClick={() => onRemove(o.id)}><Trash2 size={14} /></IconBtn>
             </li>
@@ -2292,6 +2396,323 @@ function OpportunitiesCard({ opportunities, roster, onAdd, onRemove, onToggleVol
         </ul>
       )}
     </section>
+  );
+}
+
+// An RB-hosted event's staffing plan, like the sheet's Splash Dash and
+// Collegiate Move-In tabs: "assignments" are stations or sites (what, when,
+// who, notes — a station's people, or a move-in property's owner), and the
+// run of show is a simple time-ordered schedule. Both optional.
+function emptyEventPlan() {
+  return { assignments: [], runOfShow: [] };
+}
+
+function EventPlanView({ plan, nameOf }) {
+  const p = plan || emptyEventPlan();
+  if (!p.assignments.length && !p.runOfShow.length) return null;
+  return (
+    <details className="event-plan">
+      <summary>Event plan</summary>
+      {p.assignments.length > 0 && (
+        <ul className="event-plan-list">
+          {p.assignments.map((a) => (
+            <li key={a.id}>
+              <strong>{a.what}</strong>
+              {a.when && <span className="muted"> · {a.when}</span>}
+              {a.personIds.length > 0 && <span> — {a.personIds.map(nameOf).join(", ")}</span>}
+              {a.notes && <div className="muted">{a.notes}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {p.runOfShow.length > 0 && (
+        <>
+          <div className="event-plan-subhead">Run of show</div>
+          <ul className="event-plan-list">
+            {p.runOfShow.map((r) => <li key={r.id}><strong>{r.time}</strong> {r.text}</li>)}
+          </ul>
+        </>
+      )}
+    </details>
+  );
+}
+
+function EventPlanEditor({ plan, roster, onChange }) {
+  const p = plan || emptyEventPlan();
+  const [what, setWhat] = useState("");
+  const [when, setWhen] = useState("");
+  const [notes, setNotes] = useState("");
+  const [who, setWho] = useState("");
+  const [time, setTime] = useState("");
+  const [text, setText] = useState("");
+  const [addTo, setAddTo] = useState({});
+  const nameOf = (id) => roster.find((r) => r.id === id)?.name || "Someone";
+
+  function addAssignment() {
+    if (!what.trim()) return;
+    onChange({ ...p, assignments: [...p.assignments, { id: uid("as"), what: what.trim(), when: when.trim(), notes: notes.trim(), personIds: who ? [who] : [] }] });
+    setWhat(""); setWhen(""); setNotes(""); setWho("");
+  }
+  function patchAssignment(id, patch) {
+    onChange({ ...p, assignments: p.assignments.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
+  }
+  function addRun() {
+    if (!text.trim()) return;
+    onChange({ ...p, runOfShow: [...p.runOfShow, { id: uid("rs"), time: time.trim(), text: text.trim() }] });
+    setTime(""); setText("");
+  }
+
+  const count = p.assignments.length + p.runOfShow.length;
+  return (
+    <details className="event-plan event-plan-editor">
+      <summary>Event plan{count ? ` (${p.assignments.length} stations/sites · ${p.runOfShow.length} run-of-show)` : " — stations, sites & run of show"}</summary>
+
+      <div className="event-plan-subhead">Stations &amp; sites</div>
+      {p.assignments.map((a) => (
+        <div key={a.id} className="event-plan-row">
+          <div className="event-plan-row-main">
+            <strong>{a.what}</strong>{a.when && <span className="muted"> · {a.when}</span>}
+            {a.notes && <div className="muted">{a.notes}</div>}
+            <div className="opportunity-chips">
+              {a.personIds.map((pid) => (
+                <span key={pid} className="opportunity-chip">
+                  {nameOf(pid)}
+                  <button title="Remove" onClick={() => patchAssignment(a.id, { personIds: a.personIds.filter((x) => x !== pid) })}><X size={11} /></button>
+                </span>
+              ))}
+              <select
+                className="text-input select-input select-input-sm"
+                value={addTo[a.id] || ""}
+                onChange={(e) => {
+                  if (e.target.value) patchAssignment(a.id, { personIds: [...a.personIds, e.target.value] });
+                  setAddTo({ ...addTo, [a.id]: "" });
+                }}
+              >
+                <option value="">+ Person…</option>
+                {roster.filter((r) => !a.personIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <IconBtn danger title="Remove" onClick={() => onChange({ ...p, assignments: p.assignments.filter((x) => x.id !== a.id) })}><Trash2 size={13} /></IconBtn>
+        </div>
+      ))}
+      <div className="event-plan-add">
+        <input className="text-input" placeholder="Station or site (e.g. Sampling Team 1, Campus View Apts)" value={what} onChange={(e) => setWhat(e.target.value)} />
+        <input className="text-input" placeholder="When (e.g. Sat, 8/21)" value={when} onChange={(e) => setWhen(e.target.value)} />
+        <input className="text-input" placeholder="Notes (e.g. ~500 moving in · 4-packs)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <select className="text-input select-input select-input-sm" value={who} onChange={(e) => setWho(e.target.value)}>
+          <option value="">Who (optional)</option>
+          {roster.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select>
+        <button className="btn btn-ghost btn-sm" disabled={!what.trim()} onClick={addAssignment}><Plus size={13} /> Add</button>
+      </div>
+
+      <div className="event-plan-subhead">Run of show</div>
+      {p.runOfShow.map((r) => (
+        <div key={r.id} className="event-plan-row">
+          <div className="event-plan-row-main"><strong>{r.time}</strong> {r.text}</div>
+          <IconBtn danger title="Remove" onClick={() => onChange({ ...p, runOfShow: p.runOfShow.filter((x) => x.id !== r.id) })}><Trash2 size={13} /></IconBtn>
+        </div>
+      ))}
+      <div className="event-plan-add">
+        <input className="text-input" placeholder="Time (e.g. 9:30 AM)" value={time} onChange={(e) => setTime(e.target.value)} style={{ maxWidth: 140 }} />
+        <input className="text-input" placeholder="What happens (e.g. Team 1 samples downtown)" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addRun()} />
+        <button className="btn btn-ghost btn-sm" disabled={!text.trim()} onClick={addRun}><Plus size={13} /> Add</button>
+      </div>
+    </details>
+  );
+}
+
+// Admin clothing stock + tracker, modeled on the planning sheet's Clothing
+// Tracker tab: stock rows (fit · item · color, a count per size) for this
+// team or shared by all teams, a one-click "hand out" that moves one piece
+// from stock to a person, and who-has-what for the whole team.
+function ClothingStockCard({ teamId, roster, inventory, clothingStock, onUpdateRows, onHandOut }) {
+  const allRows = clothingRowsOf(clothingStock);
+  const rows = allRows.filter((r) => !r.teamId || r.teamId === teamId);
+  const blank = { fit: "Womens", item: "", color: "", shared: false };
+  const [form, setForm] = useState(blank);
+  const [give, setGive] = useState({ rowId: "", size: "", personId: "" });
+
+  function setCount(rowId, size, value) {
+    onUpdateRows(allRows.map((r) => (r.id === rowId ? { ...r, sizes: { ...r.sizes, [size]: value } } : r)));
+  }
+  function addRow() {
+    if (!form.item.trim()) return;
+    onUpdateRows([...allRows, {
+      id: uid("cl"), teamId: form.shared ? null : teamId, fit: form.fit, item: form.item.trim(), color: form.color.trim(), sizes: {},
+    }]);
+    setForm(blank);
+  }
+  const giveRow = rows.find((r) => r.id === give.rowId);
+  const giveSizes = giveRow ? CLOTHING_SIZES.filter((sz) => Number(giveRow.sizes?.[sz]) > 0) : [];
+
+  return (
+    <section className="card" id="tour-clothing-stock">
+      <div className="card-head"><h2><Shirt size={16} /> Clothing stock &amp; tracker</h2></div>
+      <p className="muted empty-hint">What's on hand to hand out, by item, color, and size. Handing something out takes it off stock and logs it to that person.</p>
+
+      {rows.length === 0 ? (
+        <p className="muted empty-hint">No clothing logged yet. Add an item below.</p>
+      ) : (
+        <div className="clothing-table-wrap">
+          <table className="clothing-table">
+            <thead>
+              <tr><th>Item</th>{CLOTHING_SIZES.map((sz) => <th key={sz}>{sz}</th>)}<th /></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td className="clothing-item">{clothingRowLabel(r)}{!r.teamId && <span className="sm-type-tag">All teams</span>}</td>
+                  {CLOTHING_SIZES.map((sz) => (
+                    <td key={sz}>
+                      <input
+                        className="text-input text-input-num"
+                        type="number" min="0"
+                        value={r.sizes?.[sz] ?? ""}
+                        placeholder="0"
+                        onChange={(e) => setCount(r.id, sz, e.target.value === "" ? 0 : Math.max(0, parseInt(e.target.value, 10)))}
+                      />
+                    </td>
+                  ))}
+                  <td>
+                    <IconBtn danger title="Remove item" onClick={() => onUpdateRows(allRows.filter((x) => x.id !== r.id))}><Trash2 size={13} /></IconBtn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="add-row" style={{ marginTop: 10, flexWrap: "wrap" }}>
+        <select className="text-input select-input select-input-sm" value={form.fit} onChange={(e) => setForm({ ...form, fit: e.target.value })}>
+          <option>Womens</option><option>Mens</option><option>Unisex</option>
+        </select>
+        <input className="text-input" placeholder="Item (e.g. Short sleeve)" value={form.item} onChange={(e) => setForm({ ...form, item: e.target.value })} />
+        <input className="text-input" placeholder="Color (e.g. Grey)" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
+        <label className="checkbox-label"><input type="checkbox" checked={form.shared} onChange={(e) => setForm({ ...form, shared: e.target.checked })} /> All teams</label>
+        <button className="btn btn-primary btn-sm" disabled={!form.item.trim()} onClick={addRow}><Plus size={14} /> Add item</button>
+      </div>
+
+      {rows.length > 0 && (
+        <>
+          <div className="event-plan-subhead" style={{ marginTop: 16 }}>Hand out</div>
+          <div className="add-row" style={{ flexWrap: "wrap" }}>
+            <select className="text-input select-input select-input-sm" value={give.rowId} onChange={(e) => setGive({ ...give, rowId: e.target.value, size: "" })}>
+              <option value="">Item…</option>
+              {rows.map((r) => <option key={r.id} value={r.id}>{clothingRowLabel(r)}</option>)}
+            </select>
+            <select className="text-input select-input select-input-sm" value={give.size} onChange={(e) => setGive({ ...give, size: e.target.value })} disabled={!giveRow}>
+              <option value="">Size…</option>
+              {giveSizes.map((sz) => <option key={sz} value={sz}>{sz} ({giveRow.sizes[sz]} left)</option>)}
+            </select>
+            <select className="text-input select-input select-input-sm" value={give.personId} onChange={(e) => setGive({ ...give, personId: e.target.value })}>
+              <option value="">To…</option>
+              {roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={!give.rowId || !give.size || !give.personId}
+              onClick={() => { onHandOut(give.rowId, give.size, give.personId); setGive({ rowId: "", size: "", personId: "" }); }}
+            >
+              <Shirt size={14} /> Hand out
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className="event-plan-subhead" style={{ marginTop: 16 }}>Who has what</div>
+      <ul className="clothing-tracker">
+        {roster.map((p) => {
+          const items = inventory[p.id]?.clothing || [];
+          return (
+            <li key={p.id}>
+              <span className="clothing-tracker-name">{p.name}</span>
+              <span className="muted">
+                {items.length === 0 ? "Nothing yet" : items.map((it) => `${it.qty && it.qty !== "1" ? `${it.qty}× ` : ""}${it.size ? `${it.size} ` : ""}${it.item}`).join(" · ")}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+// Branch-wide links and need-to-know info, like the planning sheet's Admin
+// tab (expense form, IT and fleet numbers, how to book a 1:1, social
+// guidelines). Everyone can read it; the FMS edits it in admin mode.
+function ResourcesTab({ resources, adminMode, onChange }) {
+  const blank = { title: "", url: "", details: "" };
+  const [form, setForm] = useState(blank);
+  const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : null);
+
+  function add() {
+    if (!form.title.trim()) return;
+    onChange([...resources, { id: uid("rs"), title: form.title.trim(), url: form.url.trim(), details: form.details.trim() }]);
+    setForm(blank);
+  }
+  function move(i, dir) {
+    const next = resources.slice();
+    const j = i + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  }
+
+  return (
+    <div className="tab-content">
+      <section className="card">
+        <div className="card-head"><h2><BookOpen size={16} /> Resources</h2><Badge>{resources.length}</Badge></div>
+        <p className="muted empty-hint">Everything you may need, linked or written out here — forms, phone numbers, how-tos.</p>
+        {resources.length === 0 && (
+          <p className="muted empty-hint">{adminMode ? "Nothing here yet. Add the first resource below." : "Nothing here yet. Your FMS will add links and info."}</p>
+        )}
+        <ul className="resource-list">
+          {resources.map((r, i) => (
+            <li key={r.id} className="resource-row">
+              <div className="resource-text">
+                {safeUrl(r.url) ? (
+                  <a className="resource-title" href={r.url} target="_blank" rel="noopener noreferrer">
+                    {r.title} <ExternalLink size={13} />
+                  </a>
+                ) : (
+                  <span className="resource-title">{r.title}</span>
+                )}
+                {r.details && <span className="resource-details">{r.details}</span>}
+              </div>
+              {adminMode && (
+                <div className="gear-actions">
+                  <button className="btn btn-ghost btn-sm" disabled={i === 0} onClick={() => move(i, -1)} title="Move up">↑</button>
+                  <button className="btn btn-ghost btn-sm" disabled={i === resources.length - 1} onClick={() => move(i, 1)} title="Move down">↓</button>
+                  <IconBtn danger title="Remove" onClick={() => onChange(resources.filter((x) => x.id !== r.id))}><Trash2 size={14} /></IconBtn>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {adminMode && (
+        <section className="card">
+          <div className="card-head"><h2><Plus size={16} /> Add a resource</h2></div>
+          <div className="gen-inputs">
+            <input className="text-input" placeholder="Title (e.g. Expense reimbursement form)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+            <input className="text-input" placeholder="Link (optional, https://…)" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+          </div>
+          <textarea
+            className="text-input"
+            rows={3}
+            style={{ width: "100%", boxSizing: "border-box", resize: "vertical", marginTop: 8 }}
+            placeholder="Details (optional): phone numbers, steps, notes"
+            value={form.details}
+            onChange={(e) => setForm({ ...form, details: e.target.value })}
+          />
+          <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} disabled={!form.title.trim()} onClick={add}><Plus size={14} /> Add resource</button>
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -2478,8 +2899,8 @@ function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
 function TeamTab({
   data, allMissions, monthHistory, clothingStock, onRemoveMember, onUpdateSmType, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdateYearlyCanGoals, onUpdatePriority,
   onAddOccasion, onRemoveOccasion, generatePreview, onPreviewGenerate, onConfirmGenerate, onCancelGenerate,
-  addMember, onUpdateClothingStock, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
-  onAddOpportunity, onRemoveOpportunity, onToggleVolunteer,
+  addMember, onUpdateClothingRows, onHandOutClothing, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
+  onAddOpportunity, onUpdateOpportunity, onRemoveOpportunity, onToggleVolunteer,
 }) {
   // null when not editing. Seeded from `data` at the moment Edit is clicked
   // (not on mount) so it can never write back values from before a "Start
@@ -2609,27 +3030,19 @@ function TeamTab({
         opportunities={data.volunteerOpportunities || []}
         roster={data.roster}
         onAdd={onAddOpportunity}
+        onUpdate={onUpdateOpportunity}
         onRemove={onRemoveOpportunity}
         onToggleVolunteer={onToggleVolunteer}
       />
 
-      <section className="card" id="tour-clothing-stock">
-        <div className="card-head"><h2>Clothing stock</h2></div>
-        <p className="muted empty-hint">How many of each size you have on hand to hand out.</p>
-        <div className="gen-inputs">
-          {CLOTHING_SIZES.map((size) => (
-            <label className="gen-field" key={size}>
-              <span>{size}</span>
-              <input
-                className="text-input text-input-num"
-                type="number" min="0"
-                value={clothingStock?.[size] ?? 0}
-                onChange={(e) => onUpdateClothingStock(size, Math.max(0, parseInt(e.target.value || "0", 10)))}
-              />
-            </label>
-          ))}
-        </div>
-      </section>
+      <ClothingStockCard
+        teamId={data.id}
+        roster={data.roster}
+        inventory={data.inventory || {}}
+        clothingStock={clothingStock}
+        onUpdateRows={onUpdateClothingRows}
+        onHandOut={onHandOutClothing}
+      />
 
       <section className="card" id="tour-roster-manage-card">
         <div className="card-head"><h2>Roster &amp; priority</h2><Badge>{data.roster.length}</Badge></div>
@@ -3103,12 +3516,17 @@ function PortalStyles() {
       .top-bar {
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 12px;
         padding: 12px 20px;
         border-bottom: 1px solid rgba(255,255,255,0.1);
         background: var(--navy);
         color: #fff;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+      }
+      .top-actions { flex-shrink: 0; }
+      @media (max-width: 900px) {
+        .top-bar { flex-wrap: wrap; }
+        .top-nav { order: 3; flex-basis: 100%; }
       }
       .brand { display: flex; align-items: center; gap: 10px; }
       .brand-clickable { cursor: pointer; border-radius: 8px; }
@@ -3125,10 +3543,12 @@ function PortalStyles() {
       }
       .team-switcher:hover { border-color: rgba(255,255,255,0.5); }
       .team-switcher option { color: var(--ink); }
-      .top-nav { display: flex; align-items: center; gap: 4px; flex: 1; }
+      .top-nav { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+      .top-nav::-webkit-scrollbar { display: none; }
       .top-nav-btn {
         display: flex; align-items: center; gap: 6px;
-        padding: 8px 16px;
+        white-space: nowrap; flex-shrink: 0;
+        padding: 8px 12px;
         border-radius: 999px;
         border: none;
         background: transparent;
@@ -3563,6 +3983,32 @@ function PortalStyles() {
       .dashboard-progress-row:hover { background: var(--paper); }
       .dashboard-progress-name { flex: 0 0 170px; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
       .dashboard-progress-bar-wrap { flex: 1; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; display: block; }
+      .event-plan { margin-top: 8px; font-size: 13px; }
+      .event-plan summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 12.5px; }
+      .event-plan-subhead { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); margin: 10px 0 6px; font-weight: 600; }
+      .event-plan-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+      .event-plan-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+      .event-plan-row-main { flex: 1; }
+      .event-plan-add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+      .event-plan-add .text-input { flex: 1; min-width: 140px; }
+      .opportunity-expiry { max-width: 200px; margin-top: 6px; }
+      .clothing-table-wrap { overflow-x: auto; }
+      .clothing-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      .clothing-table th { font-size: 11px; text-transform: uppercase; color: var(--ink-soft); text-align: center; padding: 4px; }
+      .clothing-table th:first-child { text-align: left; }
+      .clothing-table td { padding: 3px; border-top: 1px solid var(--line); }
+      .clothing-table .text-input-num { width: 52px; min-width: 0; padding: 6px; text-align: center; }
+      .clothing-item { min-width: 170px; font-weight: 600; }
+      .clothing-tracker { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+      .clothing-tracker li { display: flex; gap: 10px; flex-wrap: wrap; }
+      .clothing-tracker-name { font-weight: 600; min-width: 150px; }
+      .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+      .resource-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .resource-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+      .resource-text { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+      .resource-title { font-weight: 600; color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+      a.resource-title { color: var(--accent); }
+      .resource-details { font-size: 13px; color: var(--ink-soft); white-space: pre-wrap; line-height: 1.45; }
       .dashboard-progress-note { flex: 1; font-size: 12px; color: var(--ink-soft); }
       .suggestion-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
       .suggestion-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
