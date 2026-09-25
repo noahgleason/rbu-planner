@@ -669,6 +669,7 @@ const COMMON_ASSETS_KEY = "v5:common:assets";
 const COMMON_CONTACTS_KEY = "v5:common:contacts";
 const COMMON_CLOTHING_KEY = "v5:common:clothing";
 const COMMON_RESOURCES_KEY = "v5:common:resources";
+const COMMON_SETTINGS_KEY = "v5:common:settings";
 
 async function getJSON(key, fallback) {
   try {
@@ -691,6 +692,7 @@ async function writeAllV5(data) {
     storage.set(COMMON_CONTACTS_KEY, JSON.stringify(data.missionContacts || []), true),
     storage.set(COMMON_CLOTHING_KEY, JSON.stringify(data.clothingStock || {}), true),
     storage.set(COMMON_RESOURCES_KEY, JSON.stringify(data.resources || []), true),
+    storage.set(COMMON_SETTINGS_KEY, JSON.stringify(data.settings || {}), true),
   ]);
 }
 
@@ -699,13 +701,14 @@ async function loadV5() {
   if (!ids) return null;
   const teams = await Promise.all(ids.map((id) => getJSON(teamKey(id), null)));
   if (teams.some((t) => !t)) return null; // index/teams out of sync -> treat as absent, don't render a broken team
-  const [placedAssets, missionContacts, clothingStock, resources] = await Promise.all([
+  const [placedAssets, missionContacts, clothingStock, resources, settings] = await Promise.all([
     getJSON(COMMON_ASSETS_KEY, []),
     getJSON(COMMON_CONTACTS_KEY, []),
     getJSON(COMMON_CLOTHING_KEY, {}),
     getJSON(COMMON_RESOURCES_KEY, []),
+    getJSON(COMMON_SETTINGS_KEY, {}),
   ]);
-  return { teams, placedAssets, missionContacts, clothingStock, resources };
+  return { teams, placedAssets, missionContacts, clothingStock, resources, settings };
 }
 
 // One-time v4 -> v5 migration: strips the plaintext adminPasscode field
@@ -763,6 +766,9 @@ async function persist(next, prev) {
     if (!prev || prev.resources !== next.resources) {
       writes.push(storage.set(COMMON_RESOURCES_KEY, JSON.stringify(next.resources || []), true));
     }
+    if (!prev || prev.settings !== next.settings) {
+      writes.push(storage.set(COMMON_SETTINGS_KEY, JSON.stringify(next.settings || {}), true));
+    }
     await Promise.all(writes);
     return true;
   } catch (e) {
@@ -779,6 +785,63 @@ function opportunityExpiry(o) {
 function isOpportunityOpen(o, today = new Date().toISOString().slice(0, 10)) {
   const exp = opportunityExpiry(o);
   return !exp || exp >= today;
+}
+
+// Optional sections the FMS can switch on or off for the whole branch (Team
+// & quotas -> Features). Turning one off only hides it; its data is kept,
+// so switching it back on brings everything back.
+const FEATURES = [
+  { key: "importantNotes", label: "Important notes & dates", desc: "Team board of rules, key dates, and reminders on the dashboard." },
+  { key: "yearlyGoal", label: "Yearly can goal", desc: "Goal vs. actual scoreboard on the dashboard, and the monthly table." },
+  { key: "volunteer", label: "Volunteer opportunities", desc: "RB-hosted events with sign-ups, expiration dates, and event plans." },
+  { key: "resources", label: "Resources", desc: "Tab of links, phone numbers, and how-tos for everyone." },
+  { key: "placedAssets", label: "Placed assets", desc: "Where fridges, barrels, and other equipment are right now." },
+  { key: "missionContacts", label: "Mission contacts", desc: "Contacts SMs pick up on missions." },
+  { key: "clothing", label: "Clothing stock & tracker", desc: "Stock by item, color, and size, hand-outs, and who has what." },
+];
+
+function featureFlags(settings) {
+  const saved = settings?.features || {};
+  const flags = {};
+  FEATURES.forEach((f) => { flags[f.key] = saved[f.key] !== false; });
+  return flags;
+}
+
+// Admin tour steps that point at an optional section, so the tour skips
+// them when that section is switched off.
+const TOUR_TARGET_FEATURE = {
+  "#tour-opportunities-card": "volunteer",
+  "#tour-clothing-stock": "clothing",
+  "#tour-yearly-goal-card": "yearlyGoal",
+};
+
+function FeaturesCard({ features, onToggle }) {
+  return (
+    <section className="card" id="tour-features-card">
+      <div className="card-head"><h2>Features</h2></div>
+      <p className="muted empty-hint">Switch sections on or off for every team. Turning one off only hides it; nothing is deleted.</p>
+      <ul className="feature-list">
+        {FEATURES.map((f) => (
+          <li key={f.key} className="feature-row">
+            <div className="feature-text">
+              <span className="feature-label">{f.label}</span>
+              <span className="muted">{f.desc}</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={features[f.key]}
+              aria-label={f.label}
+              className={`feature-switch ${features[f.key] ? "feature-switch-on" : ""}`}
+              onClick={() => onToggle(f.key, !features[f.key])}
+            >
+              <span className="feature-switch-knob" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 // ---------- Small UI atoms ----------
@@ -858,6 +921,7 @@ export default function MissionPortal() {
   // Everyone lands on the shared dashboard first, every visit — there's no
   // remembered identity to skip straight to (see the boot effect below).
   const [tab, setTab] = useState("dashboard");
+  const features = featureFlags(data?.settings);
   const [adminMode, setAdminMode] = useState(false);
   const [showIdentityPicker, setShowIdentityPicker] = useState(false);
   const [generatePreview, setGeneratePreview] = useState(null);
@@ -901,6 +965,11 @@ export default function MissionPortal() {
     return () => window.removeEventListener("focus", onFocus);
   }, [saveState]);
 
+  // Someone switched Resources off while it was open -> back to dashboard.
+  useEffect(() => {
+    if (tab === "resources" && !features.resources) setTab("dashboard");
+  }, [tab, features.resources]);
+
   useEffect(() => {
     if (loading || !data || !viewId || autoTourChecked.current) return;
     autoTourChecked.current = true;
@@ -924,7 +993,7 @@ export default function MissionPortal() {
   }
 
   function startAdminTour() {
-    setTourSteps(ADMIN_TOUR_STEPS);
+    setTourSteps(ADMIN_TOUR_STEPS.filter((st) => !TOUR_TARGET_FEATURE[st.target] || features[TOUR_TARGET_FEATURE[st.target]]));
     setTourStep(0);
     setTourActive(true);
   }
@@ -1221,6 +1290,11 @@ export default function MissionPortal() {
     commit({ ...data, resources });
   }
 
+  function setFeature(key, on) {
+    const settings = data.settings || {};
+    commit({ ...data, settings: { ...settings, features: { ...(settings.features || {}), [key]: on } } });
+  }
+
   // ---- volunteer opportunities (scoped to the active team) ----
   // One-off RB-hosted events the FMS needs SMs to volunteer for —
   // separate from the monthly mission plan (not month-scoped, not part of
@@ -1315,7 +1389,7 @@ export default function MissionPortal() {
         <nav className="top-nav" id="tour-nav">
           <TabBtn active={tab === "missions"} onClick={() => setTab("missions")} icon={<ClipboardList size={15} />} label="Missions" />
           <TabBtn active={tab === "gear"} onClick={() => setTab("gear")} icon={<Package size={15} />} label="Gear" />
-          <TabBtn active={tab === "resources"} onClick={() => setTab("resources")} icon={<BookOpen size={15} />} label="Resources" />
+          {features.resources && <TabBtn active={tab === "resources"} onClick={() => setTab("resources")} icon={<BookOpen size={15} />} label="Resources" />}
           {adminMode && <TabBtn active={tab === "team"} onClick={() => setTab("team")} icon={<Users size={15} />} label="Team & quotas" />}
         </nav>
         <div className="top-actions">
@@ -1379,6 +1453,7 @@ export default function MissionPortal() {
         <main className="main-panel">
           {tab === "dashboard" && (
             <DashboardTab
+              features={features}
               data={currentMonthTeam}
               myId={myId}
               adminMode={adminMode}
@@ -1430,12 +1505,13 @@ export default function MissionPortal() {
             />
           )}
 
-          {tab === "resources" && (
+          {tab === "resources" && features.resources && (
             <ResourcesTab resources={data.resources || []} adminMode={adminMode} onChange={updateResources} />
           )}
 
           {viewer && tab === "gear" && (
             <GearTab
+              features={features}
               viewer={viewer}
               teamId={activeTeam.id}
               placedByName={viewer.name}
@@ -1456,6 +1532,8 @@ export default function MissionPortal() {
           {adminMode && tab === "team" && (
             <TeamTab
               key={activeTeam.id}
+              features={features}
+              onToggleFeature={setFeature}
               data={currentMonthTeam}
               allMissions={activeTeam.missions}
               monthHistory={activeTeam.monthHistory || []}
@@ -1712,7 +1790,7 @@ function ImportantNotesCard({ notes, adminMode, onChange }) {
   );
 }
 
-function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson, onToggleVolunteer, onUpdateNotes }) {
+function DashboardTab({ features, data, myId, adminMode, placedAssets, missionContacts, isPastMissionsDue, onSelectPerson, onToggleVolunteer, onUpdateNotes }) {
   const roster = data.roster;
   // Past-dated events drop off here automatically (they stay on the admin
   // card, flagged, until someone deletes them). Undated ones never expire.
@@ -1752,9 +1830,11 @@ function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, is
         )}
       </section>
 
-      <ImportantNotesCard notes={data.importantNotes || []} adminMode={adminMode} onChange={onUpdateNotes} />
+      {features.importantNotes && (
+        <ImportantNotesCard notes={data.importantNotes || []} adminMode={adminMode} onChange={onUpdateNotes} />
+      )}
 
-      {yearlyGoal.hasData && (
+      {features.yearlyGoal && yearlyGoal.hasData && (
         <section className="card">
           <div className="card-head">
             <h2>Yearly can goal</h2>
@@ -1782,7 +1862,7 @@ function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, is
         ))}
       </section>
 
-      {opportunities.length > 0 && (
+      {features.volunteer && opportunities.length > 0 && (
         <section className="card">
           <div className="card-head"><h2><Megaphone size={16} /> Volunteer opportunities</h2><Badge>{opportunities.length}</Badge></div>
           <p className="muted empty-hint">RB-hosted events your FMS (Field Marketing Specialist) needs people for — still paid, just opt-in. Sign up below (they'll likely also text around).</p>
@@ -1849,14 +1929,14 @@ function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, is
         </ul>
       </section>
 
-      <section className="card">
+      {features.placedAssets && <section className="card">
         <div className="card-head">
           <h2><Refrigerator size={16} /> Placed assets</h2>
           <Badge>{stillPlaced} of {placedAssets.length} still out</Badge>
         </div>
         <p className="muted empty-hint">
           Where team equipment is right now, and who has it — no more "who has the barrel?" texts.
-          {contacts.length > 0 && ` Also ${contacts.length} mission contact${contacts.length > 1 ? "s" : ""} logged.`}
+          {features.missionContacts && contacts.length > 0 && ` Also ${contacts.length} mission contact${contacts.length > 1 ? "s" : ""} logged.`}
         </p>
 
         {placedAssets.length === 0 && <p className="muted empty-hint">Nothing logged yet.</p>}
@@ -1875,7 +1955,7 @@ function DashboardTab({ data, myId, adminMode, placedAssets, missionContacts, is
             </li>
           ))}
         </ul>
-      </section>
+      </section>}
     </div>
   );
 }
@@ -2088,7 +2168,7 @@ function UniFocusGuide({ viewer, roster, adminMode, suggestions, onChange }) {
 }
 
 function GearTab({
-  viewer, teamId, placedByName, inventory, placedAssets, missionContacts, clothingStock,
+  features, viewer, teamId, placedByName, inventory, placedAssets, missionContacts, clothingStock,
   onAdd, onRemove, onAddAsset, onRemoveAsset, onToggleAssetStatus, onAddContact, onRemoveContact,
 }) {
   const totals = {};
@@ -2099,15 +2179,15 @@ function GearTab({
 
   return (
     <div className="tab-content">
-      <PlacedAssetsSection
+      {features.placedAssets && <PlacedAssetsSection
         items={placedAssets}
         placedByName={placedByName}
         onAdd={onAddAsset}
         onRemove={onRemoveAsset}
         onToggleStatus={onToggleAssetStatus}
-      />
+      />}
 
-      <GearSection
+      {features.missionContacts && <GearSection
         title="Mission contacts"
         icon={<Users size={16} />}
         items={missionContacts}
@@ -2127,9 +2207,9 @@ function GearTab({
             {(it.phone || it.email) && <span className="gear-notes">{[it.phone, it.email].filter(Boolean).join(" · ")}</span>}
           </>
         )}
-      />
+      />}
 
-      <GearSection
+      {features.clothing && <GearSection
         title="Clothing in possession"
         icon={<Shirt size={16} />}
         items={inventory.clothing}
@@ -2148,7 +2228,7 @@ function GearTab({
           </>
         )}
         subtitle={`Team stock on hand — ${stockLine}`}
-      />
+      />}
 
       <GearSection
         title="Other gear"
@@ -2897,7 +2977,7 @@ function YearlyCanGoalEditor({ yearlyCanGoals, onUpdate }) {
 }
 
 function TeamTab({
-  data, allMissions, monthHistory, clothingStock, onRemoveMember, onUpdateSmType, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdateYearlyCanGoals, onUpdatePriority,
+  features, onToggleFeature, data, allMissions, monthHistory, clothingStock, onRemoveMember, onUpdateSmType, onExport, onStartNewMonth, onUpdateMeta, onUpdatePlanningConfig, onUpdateYearlyCanGoals, onUpdatePriority,
   onAddOccasion, onRemoveOccasion, generatePreview, onPreviewGenerate, onConfirmGenerate, onCancelGenerate,
   addMember, onUpdateClothingRows, onHandOutClothing, onAddMission, onUpdateMission, onRemoveMission, onToggleMissionDone, isPastMissionsDue,
   onAddOpportunity, onUpdateOpportunity, onRemoveOpportunity, onToggleVolunteer,
@@ -2961,10 +3041,12 @@ function TeamTab({
         )}
       </section>
 
-      <YearlyCanGoalEditor
-        yearlyCanGoals={data.yearlyCanGoals || emptyYearlyCanGoals()}
-        onUpdate={onUpdateYearlyCanGoals}
-      />
+      {features.yearlyGoal && (
+        <YearlyCanGoalEditor
+          yearlyCanGoals={data.yearlyCanGoals || emptyYearlyCanGoals()}
+          onUpdate={onUpdateYearlyCanGoals}
+        />
+      )}
 
       {startingMonth && (
         <StartNewMonthModal
@@ -3026,23 +3108,25 @@ function TeamTab({
 
       <MonthHistoryCard monthHistory={monthHistory} allMissions={allMissions} roster={data.roster} onExport={onExport} />
 
-      <OpportunitiesCard
+      {features.volunteer && <OpportunitiesCard
         opportunities={data.volunteerOpportunities || []}
         roster={data.roster}
         onAdd={onAddOpportunity}
         onUpdate={onUpdateOpportunity}
         onRemove={onRemoveOpportunity}
         onToggleVolunteer={onToggleVolunteer}
-      />
+      />}
 
-      <ClothingStockCard
+      {features.clothing && <ClothingStockCard
         teamId={data.id}
         roster={data.roster}
         inventory={data.inventory || {}}
         clothingStock={clothingStock}
         onUpdateRows={onUpdateClothingRows}
         onHandOut={onHandOutClothing}
-      />
+      />}
+
+      <FeaturesCard features={features} onToggle={onToggleFeature} />
 
       <section className="card" id="tour-roster-manage-card">
         <div className="card-head"><h2>Roster &amp; priority</h2><Badge>{data.roster.length}</Badge></div>
@@ -3983,6 +4067,14 @@ function PortalStyles() {
       .dashboard-progress-row:hover { background: var(--paper); }
       .dashboard-progress-name { flex: 0 0 170px; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
       .dashboard-progress-bar-wrap { flex: 1; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; display: block; }
+      .feature-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+      .feature-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+      .feature-text { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+      .feature-label { font-weight: 600; font-size: 14px; }
+      .feature-switch { position: relative; width: 40px; height: 22px; border-radius: 999px; border: none; background: var(--line); cursor: pointer; flex-shrink: 0; transition: background 0.15s; padding: 0; }
+      .feature-switch-on { background: var(--accent); }
+      .feature-switch-knob { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+      .feature-switch-on .feature-switch-knob { transform: translateX(18px); }
       .event-plan { margin-top: 8px; font-size: 13px; }
       .event-plan summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 12.5px; }
       .event-plan-subhead { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); margin: 10px 0 6px; font-weight: 600; }
