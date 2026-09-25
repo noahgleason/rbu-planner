@@ -3,7 +3,7 @@ import {
   Truck, Package, ShieldCheck, ShieldOff, CheckCircle2, Circle, Plus, Trash2,
   Lock, Unlock, Download, X, Users, ClipboardList, Shirt, Refrigerator,
   ChevronRight, AlertCircle, Loader2, Pencil, Save, HelpCircle, ArrowLeft,
-  LayoutDashboard, CalendarPlus, History, Megaphone, UserPlus, UserMinus,
+  LayoutDashboard, CalendarPlus, History, Megaphone, UserPlus, UserMinus, Lightbulb,
 } from "lucide-react";
 import storage from "./storage.js";
 
@@ -165,10 +165,10 @@ function smTypeTag(person) {
   return person.smType === "university" ? "Uni Focus" : null;
 }
 
-// University Focus SMs don't do missions — they have a flat monthly case
-// quota instead (see the Seeding hub). "Always starts at 40" per the user,
-// but is per-person overridable by an admin from there.
-const DEFAULT_SEEDING_QUOTA = 40;
+// University Focus SMs don't do missions, and their cases are tracked in
+// RBU (Red Bull University), not here — so this app only gives them a
+// planning guide: suggestions their FMS writes, either for one person or
+// for every University Focus SM on the team. No counts, quotas or progress.
 const ASSET_TYPES = ["Mini Fridge", "E-Barrel", "Ice Barrel", "DJ Desk", "Other"];
 const CLOTHING_SIZES = ["S", "M", "L", "XL"];
 
@@ -789,7 +789,11 @@ export default function MissionPortal() {
   const [tourActive, setTourActive] = useState(false);
   const [tourSteps, setTourSteps] = useState([]);
   const [tourStep, setTourStep] = useState(0);
-  const [showAdminPrompt, setShowAdminPrompt] = useState(false);
+  // The FMS path from the site (branch setup -> "Go to the planner") lands
+  // with ?admin=1, which opens the admin password prompt straight away.
+  const [showAdminPrompt, setShowAdminPrompt] = useState(
+    () => new URLSearchParams(window.location.search).get("admin") === "1"
+  );
   const saveTimer = useRef(null);
   const autoTourChecked = useRef(false);
   const lastPersistedRef = useRef(null);
@@ -916,11 +920,9 @@ export default function MissionPortal() {
   }
 
   // ---- roster mutations (scoped to the active team) ----
-  // smType is chosen once, at add-time — "field" (does missions) or
-  // "university" (does case-seeding instead, via the Seeding hub below).
-  // No seedingQuota is stamped on here — it defaults to DEFAULT_SEEDING_QUOTA
-  // (40) wherever it's read until an admin overrides it, so "always starts
-  // at 40" holds even if a member's smType changes later.
+  // smType is "field" (does missions) or "university" (gets the FMS
+  // suggestion guide instead — see UniFocusGuide). Set at add-time; admins
+  // can change it later from Team & quotas.
   function addMember(name, smType = "field") {
     const id = uid("p");
     commitTeam((t) => ({
@@ -963,21 +965,9 @@ export default function MissionPortal() {
     commitTeam({ yearlyCanGoals: next });
   }
 
-  // ---- University Focus seeding (cases, not missions) ----
-  function updateSeedingQuota(personId, quota) {
-    commitTeam((t) => ({
-      roster: t.roster.map((r) => (r.id === personId ? { ...r, seedingQuota: Math.max(0, quota) } : r)),
-    }));
-  }
-
-  function updateSeedingProgress(personId, cases) {
-    commitTeam((t) => ({
-      seedingProgress: { ...(t.seedingProgress || {}), [personId]: Math.max(0, cases) },
-    }));
-  }
-
-  function updateSeedingNotes(notes) {
-    commitTeam({ seedingNotes: notes });
+  // ---- University Focus guide (FMS suggestions, no tracking) ----
+  function updateUniSuggestions(next) {
+    commitTeam({ uniSuggestions: next });
   }
 
   // Adding an occasion extends the splits map; removing one is refused
@@ -1019,11 +1009,6 @@ export default function MissionPortal() {
         windowNote: "",
         deadlines: { missionsDue: null },
         planningConfig: { ...t.planningConfig, cansGoal: 0, totalCases: 0 },
-        // University Focus cases-placed count is a monthly running total —
-        // reset it like the can goal. Each person's target quota lives on
-        // their roster entry instead (see seedingQuota), so it carries over
-        // unchanged, same as priorities/splits/roster do.
-        seedingProgress: {},
       };
     });
   }
@@ -1031,7 +1016,9 @@ export default function MissionPortal() {
   // ---- plan generation (preview, then explicit confirm/cancel) ----
   function previewGeneratePlan() {
     setGeneratePreview(
-      planGeneration(activeTeam.planningConfig, activeTeam.roster, activeTeam.occasions, activeTeam.missions, activeTeam.month, currentActorName())
+      // University Focus SMs don't take missions (see UniFocusGuide), so the
+      // generator only splits the plan across Field Focus members.
+      planGeneration(activeTeam.planningConfig, activeTeam.roster.filter((p) => p.smType !== "university"), activeTeam.occasions, activeTeam.missions, activeTeam.month, currentActorName())
     );
   }
 
@@ -1256,9 +1243,7 @@ export default function MissionPortal() {
               const isUni = p.smType === "university";
               const list = currentMonthTeam.missions.filter((m) => m.assigneeIds.includes(p.id));
               const done = list.filter((m) => m.status === "completed").length;
-              const progressLabel = isUni
-                ? `${currentMonthTeam.seedingProgress?.[p.id] || 0}/${p.seedingQuota ?? DEFAULT_SEEDING_QUOTA}`
-                : `${done}/${list.length}`;
+              const progressLabel = isUni ? "" : `${done}/${list.length}`;
               return (
                 <button
                   key={p.id}
@@ -1307,15 +1292,13 @@ export default function MissionPortal() {
           )}
 
           {viewer && tab === "missions" && viewer.smType === "university" && (
-            <SeedingHub
+            <UniFocusGuide
               key={`${activeTeam.id}:${viewer.id}`}
               viewer={viewer}
+              roster={activeTeam.roster}
               adminMode={adminMode}
-              casesLogged={currentMonthTeam.seedingProgress?.[viewer.id] || 0}
-              notes={currentMonthTeam.seedingNotes || ""}
-              onLogCases={(cases) => updateSeedingProgress(viewer.id, cases)}
-              onUpdateQuota={(quota) => updateSeedingQuota(viewer.id, quota)}
-              onUpdateNotes={updateSeedingNotes}
+              suggestions={uniSuggestionsOf(activeTeam)}
+              onChange={updateUniSuggestions}
             />
           )}
 
@@ -1666,11 +1649,9 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
         <ul className="dashboard-progress-list">
           {roster.map((p) => {
             const isUni = p.smType === "university";
-            const quota = p.seedingQuota ?? DEFAULT_SEEDING_QUOTA;
-            const cases = data.seedingProgress?.[p.id] || 0;
             const list = data.missions.filter((m) => m.assigneeIds.includes(p.id));
             const done = list.filter((m) => m.status === "completed").length;
-            const pct = isUni ? (quota > 0 ? Math.min(100, Math.round((cases / quota) * 100)) : 0) : (list.length ? Math.round((done / list.length) * 100) : 0);
+            const pct = list.length ? Math.round((done / list.length) * 100) : 0;
             return (
               <li key={p.id}>
                 <button className="dashboard-progress-row" onClick={() => onSelectPerson(p.id)}>
@@ -1679,10 +1660,14 @@ function DashboardTab({ data, myId, placedAssets, missionContacts, isPastMission
                     {smTypeTag(p) && <span className="sm-type-tag">{smTypeTag(p)}</span>}
                     {p.id === myId && <span className="you-tag">you</span>}
                   </span>
-                  <span className="dashboard-progress-bar-wrap">
-                    <span className="dashboard-progress-bar" style={{ width: `${pct}%` }} />
-                  </span>
-                  <span className="roster-progress">{isUni ? `${cases}/${quota}` : `${done}/${list.length}`}</span>
+                  {isUni ? (
+                    <span className="dashboard-progress-note">Planning guide — tracked in RBU</span>
+                  ) : (
+                    <span className="dashboard-progress-bar-wrap">
+                      <span className="dashboard-progress-bar" style={{ width: `${pct}%` }} />
+                    </span>
+                  )}
+                  <span className="roster-progress">{isUni ? "" : `${done}/${list.length}`}</span>
                 </button>
               </li>
             );
@@ -1834,72 +1819,99 @@ function MissionsTab({ data, viewer, adminMode, onAdd, onToggle, onRemove, onUpd
   );
 }
 
+// Older teams kept one free-text `seedingNotes` blob for their University
+// Focus SMs; surface it as a team-wide suggestion until an admin edits the
+// list, at which point the materialized list replaces it.
+function uniSuggestionsOf(team) {
+  if (team.uniSuggestions) return team.uniSuggestions;
+  return team.seedingNotes && team.seedingNotes.trim()
+    ? [{ id: "legacy-notes", forId: null, text: team.seedingNotes.trim(), createdAt: null }]
+    : [];
+}
+
 // University Focus SMs don't do missions — this replaces the Missions tab
-// for them. Deliberately minimal per the user's own framing: a quota, a
-// self-reported running count (same "student logs their own work" pattern
-// as a seeding mission's cans-placed field), and whatever notes Hunter has
-// left for the team's Uni Focus SMs. Quota editing is admin-only; logging
-// cases is left to the SM themselves (or an admin standing in for them).
-function SeedingHub({ viewer, adminMode, casesLogged, notes, onLogCases, onUpdateQuota, onUpdateNotes }) {
-  const quota = viewer.seedingQuota ?? DEFAULT_SEEDING_QUOTA;
-  const pct = quota > 0 ? Math.min(100, Math.round((casesLogged / quota) * 100)) : 0;
-  const [casesDraft, setCasesDraft] = useState(String(casesLogged));
-  useEffect(() => { setCasesDraft(String(casesLogged)); }, [casesLogged]);
-  const [notesDraft, setNotesDraft] = useState(notes);
-  useEffect(() => { setNotesDraft(notes); }, [notes]);
+// for them. It's a planning guide only: their cases are tracked in RBU, so
+// nothing here counts or measures anything. The FMS (admin mode) writes
+// suggestions either for this one person or for every University Focus SM
+// on the team; everyone else just reads them.
+function UniFocusGuide({ viewer, roster, adminMode, suggestions, onChange }) {
+  const [draft, setDraft] = useState("");
+  const [forId, setForId] = useState(viewer.id);
+  const mine = suggestions.filter((s) => s.forId === viewer.id);
+  const everyone = suggestions.filter((s) => !s.forId);
+  const uniRoster = roster.filter((r) => r.smType === "university");
+
+  function add() {
+    const text = draft.trim();
+    if (!text) return;
+    onChange([...suggestions, { id: uid("sg"), forId: forId || null, text, createdAt: new Date().toISOString() }]);
+    setDraft("");
+  }
+  function remove(id) {
+    onChange(suggestions.filter((s) => s.id !== id));
+  }
+
+  function list(items, emptyText) {
+    if (items.length === 0) return <p className="muted empty-hint">{emptyText}</p>;
+    return (
+      <ul className="suggestion-list">
+        {items.map((s) => (
+          <li key={s.id} className="suggestion-row">
+            <Lightbulb size={15} className="suggestion-icon" />
+            <span className="suggestion-text">{s.text}</span>
+            {adminMode && (
+              <IconBtn danger title="Remove suggestion" onClick={() => remove(s.id)}>
+                <Trash2 size={14} />
+              </IconBtn>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   return (
     <div className="tab-content">
       <section className="card">
         <div className="card-head">
-          <h2>{viewer.name}'s seeding</h2>
-          <Badge tone={quota > 0 && casesLogged >= quota ? "good" : "default"}>{casesLogged} of {quota} cases</Badge>
+          <h2>{viewer.name}'s University Focus plan</h2>
+          <Badge>University Focus</Badge>
         </div>
-        <p className="muted empty-hint">University Focus — cases placed this month, not missions.</p>
-        <div className="yearly-goal-bar-wrap">
-          <span className="yearly-goal-bar yearly-goal-bar-good" style={{ width: `${pct}%` }} />
-        </div>
-        <div className="gen-inputs">
-          <label className="gen-field">
-            <span>Cases placed so far</span>
-            <input
-              className="text-input"
-              type="number" min="0"
-              value={casesDraft}
-              onChange={(e) => setCasesDraft(e.target.value)}
-              onBlur={() => onLogCases(Math.max(0, parseInt(casesDraft || "0", 10)))}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            />
-          </label>
-          {adminMode && (
-            <label className="gen-field">
-              <span>Monthly quota</span>
-              <input
-                className="text-input"
-                type="number" min="0"
-                value={quota}
-                onChange={(e) => onUpdateQuota(Math.max(0, parseInt(e.target.value || "0", 10)))}
-              />
-            </label>
-          )}
-        </div>
+        <p className="muted empty-hint">
+          Ideas from your FMS on where and how to seed this month. This is a planning guide only. Log your cases in RBU as usual.
+        </p>
       </section>
 
-      {(adminMode || notes) && (
+      <section className="card">
+        <div className="card-head"><h2><Lightbulb size={16} /> Just for {viewer.name.split(" ")[0]}</h2></div>
+        {list(mine, adminMode ? "No personal suggestions yet. Add one below." : "Nothing just for you yet. Check back after your FMS plans the month.")}
+      </section>
+
+      <section className="card">
+        <div className="card-head"><h2><Users size={16} /> For all University Focus SMs</h2></div>
+        {list(everyone, "No team-wide suggestions yet.")}
+      </section>
+
+      {adminMode && (
         <section className="card">
-          <div className="card-head"><h2>Notes from Hunter</h2></div>
-          {adminMode ? (
-            <textarea
-              className="text-input"
-              rows={4}
-              placeholder="Anything the University Focus SMs on this team need to know — placement rules, flavor mix, reminders..."
-              value={notesDraft}
-              onChange={(e) => setNotesDraft(e.target.value)}
-              onBlur={() => onUpdateNotes(notesDraft)}
-            />
-          ) : (
-            <p className="muted">{notes}</p>
-          )}
+          <div className="card-head"><h2><Plus size={16} /> Add a suggestion</h2></div>
+          <textarea
+            className="text-input"
+            rows={3}
+            style={{ width: "100%", boxSizing: "border-box", resize: "vertical" }}
+            placeholder="e.g. Hit the dorm move-in weekend at the east quad. Bring the cooler and pair with the rec center event."
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="add-row" style={{ marginTop: 10 }}>
+            <select className="text-input select-input" value={forId || ""} onChange={(e) => setForId(e.target.value || null)}>
+              <option value="">All University Focus SMs</option>
+              {uniRoster.map((r) => <option key={r.id} value={r.id}>Just {r.name}</option>)}
+            </select>
+            <button className="btn btn-primary btn-sm" disabled={!draft.trim()} onClick={add}>
+              <Plus size={14} /> Add
+            </button>
+          </div>
         </section>
       )}
     </div>
@@ -2953,7 +2965,7 @@ function PortalStyles() {
       .top-bar {
         display: flex;
         align-items: center;
-        gap: 24px;
+        gap: 16px;
         padding: 12px 20px;
         border-bottom: 1px solid rgba(255,255,255,0.1);
         background: var(--navy);
@@ -3008,6 +3020,9 @@ function PortalStyles() {
         align-items: center;
         gap: 5px;
         margin-right: 4px;
+        min-width: 64px;
+        justify-content: flex-end;
+        white-space: nowrap;
       }
       .save-ok { color: #6ee7a8; }
       .top-bar .btn-ghost { border-color: rgba(255,255,255,0.3); color: #fff; }
@@ -3410,6 +3425,11 @@ function PortalStyles() {
       .dashboard-progress-row:hover { background: var(--paper); }
       .dashboard-progress-name { flex: 0 0 170px; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
       .dashboard-progress-bar-wrap { flex: 1; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; display: block; }
+      .dashboard-progress-note { flex: 1; font-size: 12px; color: var(--ink-soft); }
+      .suggestion-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .suggestion-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+      .suggestion-icon { color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+      .suggestion-text { flex: 1; line-height: 1.45; white-space: pre-wrap; }
       .dashboard-progress-bar { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.3s ease; }
       .yearly-goal-bar-wrap { height: 14px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 4px 0 10px; }
       .yearly-goal-bar { display: block; height: 100%; border-radius: 999px; transition: width 0.3s ease; }

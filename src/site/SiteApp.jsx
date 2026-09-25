@@ -1,4 +1,5 @@
 import React, { useEffect } from "react";
+import { Truck } from "lucide-react";
 import Landing from "./Landing.jsx";
 import BranchSetup from "./BranchSetup.jsx";
 import LoginStub from "./LoginStub.jsx";
@@ -17,6 +18,7 @@ export default function SiteApp() {
   const path = window.location.pathname;
   let page;
   let title = "Mission Manifest";
+  let isLanding = false;
   if (path.startsWith("/site/branch-setup")) {
     page = <BranchSetup />;
     title = "Set up your branch — Mission Manifest";
@@ -28,6 +30,7 @@ export default function SiteApp() {
     title = "SM sign-in — Mission Manifest";
   } else {
     page = <Landing />;
+    isLanding = true;
   }
 
   useEffect(() => { document.title = title; }, [title]);
@@ -35,6 +38,11 @@ export default function SiteApp() {
   return (
     <div className="site-root">
       <SiteStyles />
+      {!isLanding && (
+        <header className="site-header">
+          <a className="site-brand" href="/site"><Truck size={20} strokeWidth={2.2} /> Mission Manifest</a>
+        </header>
+      )}
       {page}
     </div>
   );

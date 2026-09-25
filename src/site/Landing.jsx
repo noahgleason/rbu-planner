@@ -117,7 +117,8 @@ export default function Landing() {
           <h1>The monthly plan, without the spreadsheet.</h1>
           <p>
             Mission Manifest turns a Field Marketing Specialist's (FMS) monthly product allotment into a shared, self-service
-            mission plan — generated as a draft, hand-tuned with real directives, and tracked by every team you oversee.
+            planning guide — generated as a draft, hand-tuned with real directives, and shared with every team you oversee.
+            Results still live in RBU; this is where the plan comes together.
           </p>
           <div className="site-hero-actions">
             <a className="site-btn site-btn-primary site-btn-lg" href="/site/login/sm">

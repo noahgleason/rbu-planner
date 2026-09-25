@@ -9,6 +9,7 @@ export default function SiteStyles() {
   return (
     <style>{`
       .site-root {
+        display: flow-root;
         --paper: #F8F8F8;
         --ink: #000F1E;
         --ink-soft: rgba(0,15,30,0.62);
